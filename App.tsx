@@ -425,6 +425,8 @@ const App = () => {
     const [search, setSearch] = useState('');
     const [month, setMonth] = useState('');
     const [year, setYear] = useState('');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
     const [onlyMerch, setOnlyMerch] = useState(false);
 
     // Get unique years
@@ -436,8 +438,13 @@ const App = () => {
       if (onlyMerch && !i.supplier.is_merchandise) return false;
       
       const d = new Date(i.rows[0]?.date);
+      // Month/Year filter
       if (month && (d.getMonth() + 1).toString() !== month) return false;
       if (year && d.getFullYear().toString() !== year) return false;
+
+      // Date Range Filter
+      if (dateFrom && i.rows[0]?.date < dateFrom) return false;
+      if (dateTo && i.rows[0]?.date > dateTo) return false;
       
       return true;
     }).sort((a, b) => new Date(b.rows[0]?.date).getTime() - new Date(a.rows[0]?.date).getTime()); // Newest first
@@ -447,30 +454,63 @@ const App = () => {
     return (
       <div className="p-6 max-w-7xl mx-auto h-[calc(100vh-100px)] flex flex-col">
         {/* Filters */}
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-4 flex flex-wrap gap-4 items-center">
-          <input 
-            type="text" 
-            placeholder="Cerca fornitore..." 
-            className={`${INPUT_SM_STYLE} w-48`}
-            value={search} onChange={e => setSearch(e.target.value)}
-          />
-          <select className={`${INPUT_SM_STYLE} w-32`} value={month} onChange={e => setMonth(e.target.value)}>
-            <option value="">Mese</option>
-            {[...Array(12)].map((_, i) => <option key={i} value={i+1}>{i+1}</option>)}
-          </select>
-          <select className={`${INPUT_SM_STYLE} w-32`} value={year} onChange={e => setYear(e.target.value)}>
-            <option value="">Anno</option>
-            {years.map(y => <option key={y} value={y}>{y}</option>)}
-          </select>
-          <div className="flex items-center gap-2">
-            <input type="checkbox" id="hist_merch" checked={onlyMerch} onChange={e => setOnlyMerch(e.target.checked)} className="rounded text-primary-600" />
-            <label htmlFor="hist_merch" className="text-sm text-slate-700">Solo Merce</label>
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-4 flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[200px]">
+            <input 
+              type="text" 
+              placeholder="Cerca fornitore..." 
+              className={INPUT_SM_STYLE + " w-full"}
+              value={search} onChange={e => setSearch(e.target.value)}
+            />
           </div>
+          
+          <div className="flex flex-col">
+            <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Mese</span>
+            <select className={`${INPUT_SM_STYLE} w-32`} value={month} onChange={e => setMonth(e.target.value)}>
+              <option value="">Tutti</option>
+              {[...Array(12)].map((_, i) => <option key={i} value={i+1}>{new Date(0, i).toLocaleString('it-IT', { month: 'long' })}</option>)}
+            </select>
+          </div>
+
+          <div className="flex flex-col">
+             <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Anno</span>
+             <select className={`${INPUT_SM_STYLE} w-24`} value={year} onChange={e => setYear(e.target.value)}>
+               <option value="">Tutti</option>
+               {years.map(y => <option key={y} value={y}>{y}</option>)}
+             </select>
+          </div>
+
+          <div className="flex flex-col">
+             <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Dal</span>
+             <input 
+               type="date" 
+               className={INPUT_SM_STYLE}
+               value={dateFrom} 
+               onChange={e => setDateFrom(e.target.value)} 
+             />
+          </div>
+
+          <div className="flex flex-col">
+             <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Al</span>
+             <input 
+               type="date" 
+               className={INPUT_SM_STYLE}
+               value={dateTo} 
+               onChange={e => setDateTo(e.target.value)} 
+             />
+          </div>
+
+          <div className="flex items-center gap-2 pb-2">
+            <input type="checkbox" id="hist_merch" checked={onlyMerch} onChange={e => setOnlyMerch(e.target.checked)} className="rounded text-primary-600" />
+            <label htmlFor="hist_merch" className="text-sm text-slate-700 font-medium">Solo Merce</label>
+          </div>
+          
           <button 
-            onClick={() => { setSearch(''); setMonth(''); setYear(''); setOnlyMerch(false); }}
-            className="ml-auto text-slate-400 hover:text-slate-600"
+            onClick={() => { setSearch(''); setMonth(''); setYear(''); setOnlyMerch(false); setDateFrom(''); setDateTo(''); }}
+            className="ml-auto px-3 py-2 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-1 transition-colors"
+            title="Resetta Filtri"
           >
-            <History size={20} />
+            <History size={16} /> Reset
           </button>
         </div>
 
@@ -502,6 +542,11 @@ const App = () => {
                    </td>
                 </tr>
               ))}
+              {historyInvoices.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="p-8 text-center text-slate-400">Nessuna fattura trovata con i filtri selezionati.</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
