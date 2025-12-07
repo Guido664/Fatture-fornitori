@@ -66,6 +66,11 @@ export const deleteSupplier = (id: string): void => {
   localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(invoices));
 };
 
+export const deleteAllSuppliers = (): void => {
+  localStorage.setItem(STORAGE_KEYS.SUPPLIERS, JSON.stringify([]));
+  localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify([]));
+};
+
 export const saveInvoice = (invoice: Omit<Invoice, 'id' | 'creation_date'> & { id?: string, creation_date?: string }): Invoice => {
   const invoices = getInvoices();
   let newInvoice: Invoice;

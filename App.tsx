@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { LayoutDashboard, Users, FileText, History, Trash2, AlertTriangle, Save, Download, Upload } from 'lucide-react';
 import { Supplier, Invoice, InvoiceWithSupplier } from './types';
-import { getSuppliers, getInvoices, seedDatabase, calculateInvoiceBalance, getInvoiceInitialAmount, deleteSupplier, saveSupplier, exportDatabase, importDatabase } from './services/storage';
+import { getSuppliers, getInvoices, seedDatabase, calculateInvoiceBalance, getInvoiceInitialAmount, deleteSupplier, saveSupplier, exportDatabase, importDatabase, deleteAllSuppliers } from './services/storage';
 
 // Components
 import { SupplierFormModal } from './components/SupplierFormModal';
@@ -65,7 +65,8 @@ const App = () => {
   
   // Modals
   const [isSupplierModalOpen, setSupplierModalOpen] = useState(false);
-  const [supplierToDelete, setSupplierToDelete] = useState<string | null>(null); // State for deletion confirmation
+  const [supplierToDelete, setSupplierToDelete] = useState<string | null>(null); // State for single deletion
+  const [isDeleteAllModalOpen, setDeleteAllModalOpen] = useState(false); // State for delete all
   const [editingInvoice, setEditingInvoice] = useState<{ isOpen: boolean, supplierId: string, invoice: Invoice | null }>({
     isOpen: false,
     supplierId: '',
@@ -112,6 +113,14 @@ const App = () => {
         setActiveTab(0);
       }
     }
+  };
+
+  const confirmDeleteAllSuppliers = () => {
+    deleteAllSuppliers();
+    setDeleteAllModalOpen(false);
+    refreshData();
+    setSelectedSupplierId(null);
+    setActiveTab(0);
   };
 
   // Handle Export/Import
@@ -195,8 +204,19 @@ const App = () => {
         </div>
 
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-          <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 text-xs font-semibold text-slate-500 uppercase tracking-wider">
-            Elenco Fornitori ({filtered.length})
+          <div className="px-6 py-3 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+            <div className="text-xs font-semibold text-slate-500 uppercase tracking-wider">
+              Elenco Fornitori ({filtered.length})
+            </div>
+            {suppliers.length > 0 && (
+              <button
+                onClick={() => setDeleteAllModalOpen(true)}
+                className="text-slate-400 hover:text-red-600 hover:bg-red-50 p-1.5 rounded-md transition-colors"
+                title="Elimina tutti i fornitori"
+              >
+                <Trash2 size={18} />
+              </button>
+            )}
           </div>
           <ul className="divide-y divide-slate-100">
             {filtered.map(s => (
@@ -625,7 +645,7 @@ const App = () => {
         onSave={refreshData}
       />
 
-      {/* Delete Confirmation Modal */}
+      {/* Delete Single Supplier Modal */}
       <Modal 
         isOpen={!!supplierToDelete}
         onClose={() => setSupplierToDelete(null)}
@@ -655,6 +675,41 @@ const App = () => {
               className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 shadow-md font-medium"
             >
               Conferma Eliminazione
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      {/* Delete ALL Suppliers Modal */}
+      <Modal 
+        isOpen={isDeleteAllModalOpen}
+        onClose={() => setDeleteAllModalOpen(false)}
+        title="Elimina Tutti i Fornitori"
+        maxWidth="max-w-md"
+      >
+        <div className="p-4">
+          <div className="flex items-center gap-4 text-red-600 bg-red-50 p-4 rounded-lg mb-6">
+             <AlertTriangle size={32} />
+             <div>
+                <p className="font-bold text-lg">Attenzione!</p>
+                <p className="text-sm">Stai per eliminare l'intero database.</p>
+             </div>
+          </div>
+          <p className="text-slate-700 mb-8 text-center text-lg">
+            Sei sicuro di voler eliminare <b>tutti i fornitori</b> e le relative fatture? L'operazione non è reversibile.
+          </p>
+          <div className="flex justify-end gap-3">
+            <button 
+              onClick={() => setDeleteAllModalOpen(false)}
+              className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg"
+            >
+              Annulla
+            </button>
+            <button 
+              onClick={confirmDeleteAllSuppliers}
+              className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 shadow-md font-medium"
+            >
+              Elimina Tutto
             </button>
           </div>
         </div>
