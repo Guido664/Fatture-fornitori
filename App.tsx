@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, Users, FileText, History, Trash2, AlertTriangle, Save, Download, Upload } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, History, Trash2, AlertTriangle, Save, Download, Upload, Loader2 } from 'lucide-react';
 import { Supplier, Invoice, InvoiceWithSupplier } from './types';
 import { getSuppliers, getInvoices, seedDatabase, calculateInvoiceBalance, getInvoiceInitialAmount, deleteSupplier, saveSupplier, exportDatabase, importDatabase, deleteAllSuppliers } from './services/storage';
 
@@ -9,7 +9,6 @@ import { InvoiceModal } from './components/InvoiceModal';
 import { Modal } from './components/ui/Modal';
 
 // --- Constants for Styles ---
-// Using direct classes because @apply doesn't work with CDN-based Tailwind in runtime
 const LABEL_STYLE = "block text-sm font-bold text-slate-900 mb-1.5";
 const INPUT_STYLE = "w-full p-2.5 border border-slate-300 rounded-md focus:ring-2 focus:ring-primary-500 outline-none text-sm transition-all text-slate-900";
 const INPUT_SM_STYLE = "p-2 border border-slate-300 rounded focus:ring-2 focus:ring-primary-500 outline-none text-sm";
@@ -59,14 +58,15 @@ const App = () => {
   const [activeTab, setActiveTab] = useState(0);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   
   // Navigation State
   const [selectedSupplierId, setSelectedSupplierId] = useState<string | null>(null);
   
   // Modals
   const [isSupplierModalOpen, setSupplierModalOpen] = useState(false);
-  const [supplierToDelete, setSupplierToDelete] = useState<string | null>(null); // State for single deletion
-  const [isDeleteAllModalOpen, setDeleteAllModalOpen] = useState(false); // State for delete all
+  const [supplierToDelete, setSupplierToDelete] = useState<string | null>(null);
+  const [isDeleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<{ isOpen: boolean, supplierId: string, invoice: Invoice | null }>({
     isOpen: false,
     supplierId: '',
@@ -76,13 +76,20 @@ const App = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Load Data
-  const refreshData = () => {
-    setSuppliers(getSuppliers());
-    setInvoices(getInvoices());
+  const refreshData = async () => {
+    setIsLoading(true);
+    try {
+      const [s, i] = await Promise.all([getSuppliers(), getInvoices()]);
+      setSuppliers(s);
+      setInvoices(i);
+    } catch (e) {
+      console.error("Failed to load data", e);
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   useEffect(() => {
-    seedDatabase();
     refreshData();
   }, []);
 
@@ -90,42 +97,47 @@ const App = () => {
   const getEnrichedInvoices = (): InvoiceWithSupplier[] => {
     return invoices.map(inv => {
       const supplier = suppliers.find(s => s.id === inv.supplier_id);
+      if (!supplier) return null;
       return {
         ...inv,
-        supplier: supplier!,
+        supplier: supplier,
         balance: calculateInvoiceBalance(inv),
         initialAmount: getInvoiceInitialAmount(inv)
       };
-    }).filter(i => i.supplier); // Safety filter
+    }).filter(i => i !== null) as InvoiceWithSupplier[];
   };
 
   const enrichedInvoices = getEnrichedInvoices();
 
   // Handle Deletion
-  const confirmDeleteSupplier = () => {
+  const confirmDeleteSupplier = async () => {
     if (supplierToDelete) {
-      deleteSupplier(supplierToDelete);
+      setIsLoading(true);
+      await deleteSupplier(supplierToDelete);
       setSupplierToDelete(null);
-      refreshData();
-      // If we deleted the currently selected supplier, go back to list
+      await refreshData();
       if (selectedSupplierId === supplierToDelete) {
         setSelectedSupplierId(null);
         setActiveTab(0);
       }
+      setIsLoading(false);
     }
   };
 
-  const confirmDeleteAllSuppliers = () => {
-    deleteAllSuppliers();
+  const confirmDeleteAllSuppliers = async () => {
+    setIsLoading(true);
+    await deleteAllSuppliers();
     setDeleteAllModalOpen(false);
-    refreshData();
+    await refreshData();
     setSelectedSupplierId(null);
     setActiveTab(0);
+    setIsLoading(false);
   };
 
   // Handle Export/Import
-  const handleExportData = () => {
-    const data = exportDatabase();
+  const handleExportData = async () => {
+    setIsLoading(true);
+    const data = await exportDatabase();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -135,6 +147,7 @@ const App = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    setIsLoading(false);
   };
 
   const handleImportClick = () => {
@@ -148,25 +161,35 @@ const App = () => {
     if (!file) return;
 
     const reader = new FileReader();
-    reader.onload = (event) => {
+    reader.onload = async (event) => {
       const content = event.target?.result as string;
       if (content) {
-        const success = importDatabase(content);
+        setIsLoading(true);
+        const success = await importDatabase(content);
         if (success) {
-          refreshData();
-          alert('Dati importati con successo!');
+          await refreshData();
+          alert('Dati importati con successo su Supabase!');
           setActiveTab(0);
         } else {
-          alert('Errore durante l\'importazione. Controlla che il file sia valido.');
+          alert('Errore durante l\'importazione. Controlla il file.');
         }
+        setIsLoading(false);
       }
     };
     reader.readAsText(file);
-    // Reset input
     e.target.value = '';
   };
 
   // --- Views ---
+
+  const LoadingOverlay = () => (
+    <div className="fixed inset-0 bg-white/50 backdrop-blur-sm z-[60] flex items-center justify-center">
+      <div className="bg-white p-4 rounded-lg shadow-xl flex items-center gap-3">
+        <Loader2 className="animate-spin text-primary-600" />
+        <span className="font-medium text-slate-700">Caricamento...</span>
+      </div>
+    </div>
+  );
 
   // TAB 1: Supplier List
   const SupplierListTab = () => {
@@ -257,8 +280,6 @@ const App = () => {
   // TAB 2: Detail
   const SupplierDetailTab = () => {
     const selectedSupplier = suppliers.find(s => s.id === selectedSupplierId);
-    
-    // Internal state for form editing
     const [formData, setFormData] = useState<Supplier | null>(null);
 
     useEffect(() => {
@@ -278,22 +299,24 @@ const App = () => {
     }
 
     const supplierInvoices = enrichedInvoices
-      .filter(i => i.supplier_id === selectedSupplierId && i.balance !== 0) // Only active debt
+      .filter(i => i.supplier_id === selectedSupplierId && i.balance !== 0)
       .sort((a, b) => new Date(a.rows[0]?.date || '').getTime() - new Date(b.rows[0]?.date || '').getTime());
 
     const totalBalance = supplierInvoices.reduce((acc, curr) => acc + curr.balance, 0);
 
-    const handleUpdateSupplier = () => {
+    const handleUpdateSupplier = async () => {
       if (formData) {
-        saveSupplier(formData);
-        refreshData();
+        setIsLoading(true);
+        await saveSupplier(formData);
+        await refreshData();
         alert('Dati fornitore aggiornati');
+        setIsLoading(false);
       }
     };
 
     return (
       <div className="flex h-[calc(100vh-80px)] overflow-hidden">
-        {/* Left Column: Data - Adjusted to 30% */}
+        {/* Left Column: Data - 30% */}
         <div className="w-[30%] bg-white border-r border-slate-200 p-8 overflow-y-auto">
           <h2 className="text-lg font-bold text-slate-800 mb-6">Dati Fornitore</h2>
           <div className="space-y-4">
@@ -331,7 +354,7 @@ const App = () => {
           </div>
         </div>
 
-        {/* Right Column: Invoices - Adjusted to 70% */}
+        {/* Right Column: Invoices - 70% */}
         <div className="w-[70%] bg-slate-50 p-6 overflow-y-auto">
           <div className="flex justify-between items-center mb-6">
             <h2 className="text-xl font-bold text-slate-800">Movimenti: {selectedSupplier.name}</h2>
@@ -383,11 +406,10 @@ const App = () => {
     );
   };
 
-  // TAB 3: Invoice List (Global Dashboard)
+  // TAB 3: Global Dashboard
   const ActiveInvoicesTab = () => {
     const activeInvoices = enrichedInvoices.filter(i => i.balance !== 0);
     
-    // Grouping
     const merchandiseInvoices = activeInvoices
       .filter(i => i.supplier.is_merchandise)
       .sort((a, b) => new Date(a.rows[0]?.date).getTime() - new Date(b.rows[0]?.date).getTime());
@@ -405,7 +427,6 @@ const App = () => {
 
     return (
       <div className="p-6 max-w-7xl mx-auto space-y-8">
-        {/* Merchandise Section */}
         <section>
           <div className="flex items-center gap-3 mb-4">
             <h3 className="text-lg font-bold text-slate-800">📦 MERCE CONTO ACQUISTI</h3>
@@ -422,7 +443,6 @@ const App = () => {
 
         <div className="border-t border-slate-200 my-4"></div>
 
-        {/* To Pay Section */}
         <section>
           <div className="flex items-center gap-3 mb-4">
             <h3 className="text-lg font-bold text-slate-800">💰 DA SALDARE (Servizi)</h3>
@@ -449,31 +469,26 @@ const App = () => {
     const [dateTo, setDateTo] = useState('');
     const [onlyMerch, setOnlyMerch] = useState(false);
 
-    // Get unique years
     const years = Array.from(new Set(enrichedInvoices.map(i => new Date(i.rows[0]?.date).getFullYear()))).sort().reverse();
 
     const historyInvoices = enrichedInvoices.filter(i => {
-      if (i.balance !== 0) return false; // Only closed invoices
+      if (i.balance !== 0) return false;
       if (search && !i.supplier.name.toLowerCase().includes(search.toLowerCase())) return false;
       if (onlyMerch && !i.supplier.is_merchandise) return false;
       
       const d = new Date(i.rows[0]?.date);
-      // Month/Year filter
       if (month && (d.getMonth() + 1).toString() !== month) return false;
       if (year && d.getFullYear().toString() !== year) return false;
-
-      // Date Range Filter
       if (dateFrom && i.rows[0]?.date < dateFrom) return false;
       if (dateTo && i.rows[0]?.date > dateTo) return false;
       
       return true;
-    }).sort((a, b) => new Date(b.rows[0]?.date).getTime() - new Date(a.rows[0]?.date).getTime()); // Newest first
+    }).sort((a, b) => new Date(b.rows[0]?.date).getTime() - new Date(a.rows[0]?.date).getTime());
 
     const totalSettled = historyInvoices.reduce((a, b) => a + b.initialAmount, 0);
 
     return (
       <div className="p-6 max-w-7xl mx-auto h-[calc(100vh-100px)] flex flex-col">
-        {/* Filters */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-4 flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[200px]">
             <input 
@@ -502,22 +517,12 @@ const App = () => {
 
           <div className="flex flex-col">
              <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Dal</span>
-             <input 
-               type="date" 
-               className={INPUT_SM_STYLE}
-               value={dateFrom} 
-               onChange={e => setDateFrom(e.target.value)} 
-             />
+             <input type="date" className={INPUT_SM_STYLE} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
           </div>
 
           <div className="flex flex-col">
              <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Al</span>
-             <input 
-               type="date" 
-               className={INPUT_SM_STYLE}
-               value={dateTo} 
-               onChange={e => setDateTo(e.target.value)} 
-             />
+             <input type="date" className={INPUT_SM_STYLE} value={dateTo} onChange={e => setDateTo(e.target.value)} />
           </div>
 
           <div className="flex items-center gap-2 pb-2">
@@ -534,7 +539,6 @@ const App = () => {
           </button>
         </div>
 
-        {/* List */}
         <div className="flex-1 overflow-y-auto bg-white rounded-xl shadow-sm border border-slate-200">
           <table className="w-full text-sm text-left">
             <thead className="text-xs text-slate-500 uppercase bg-slate-50 sticky top-0">
@@ -581,7 +585,8 @@ const App = () => {
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex flex-col font-sans">
+    <div className="min-h-screen bg-slate-100 flex flex-col font-sans relative">
+      {isLoading && <LoadingOverlay />}
       
       {/* Header Tabs */}
       <div className="bg-white border-b border-slate-200 shadow-sm z-10 sticky top-0">
@@ -597,7 +602,7 @@ const App = () => {
              <button 
                onClick={handleExportData}
                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
-               title="Esporta tutti i dati"
+               title="Esporta dati da Supabase"
              >
                <Download size={16} />
                Esporta
@@ -605,7 +610,7 @@ const App = () => {
              <button 
                onClick={handleImportClick}
                className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
-               title="Importa dati (sovrascrive tutto)"
+               title="Importa dati su Supabase"
              >
                <Upload size={16} />
                Importa
@@ -645,7 +650,7 @@ const App = () => {
         onSave={refreshData}
       />
 
-      {/* Delete Single Supplier Modal */}
+      {/* Delete Modals */}
       <Modal 
         isOpen={!!supplierToDelete}
         onClose={() => setSupplierToDelete(null)}
@@ -680,7 +685,6 @@ const App = () => {
         </div>
       </Modal>
 
-      {/* Delete ALL Suppliers Modal */}
       <Modal 
         isOpen={isDeleteAllModalOpen}
         onClose={() => setDeleteAllModalOpen(false)}
@@ -692,11 +696,11 @@ const App = () => {
              <AlertTriangle size={32} />
              <div>
                 <p className="font-bold text-lg">Attenzione!</p>
-                <p className="text-sm">Stai per eliminare l'intero database.</p>
+                <p className="text-sm">Stai per eliminare l'intero database remoto.</p>
              </div>
           </div>
           <p className="text-slate-700 mb-8 text-center text-lg">
-            Sei sicuro di voler eliminare <b>tutti i fornitori</b> e le relative fatture? L'operazione non è reversibile.
+            Sei sicuro di voler eliminare <b>tutti i fornitori</b> e le relative fatture da Supabase?
           </p>
           <div className="flex justify-end gap-3">
             <button 

@@ -1,128 +1,161 @@
-import { Supplier, Invoice, InvoiceRow } from '../types';
-
-const STORAGE_KEYS = {
-  SUPPLIERS: 'sim_suppliers',
-  INVOICES: 'sim_invoices',
-};
-
-// --- Helpers ---
-
-const generateId = () => crypto.randomUUID();
+import { supabase } from '../supabaseClient';
+import { Supplier, Invoice } from '../types';
 
 // --- Read Functions (Getters) ---
-// Must be defined BEFORE being used in deleteSupplier
 
-export const getSuppliers = (): Supplier[] => {
-  const data = localStorage.getItem(STORAGE_KEYS.SUPPLIERS);
-  return data ? JSON.parse(data) : [];
+export const getSuppliers = async (): Promise<Supplier[]> => {
+  const { data, error } = await supabase
+    .from('suppliers')
+    .select('*')
+    .order('name', { ascending: true });
+  
+  if (error) {
+    console.error('Error fetching suppliers:', error);
+    return [];
+  }
+  return data as Supplier[];
 };
 
-export const getInvoices = (): Invoice[] => {
-  const data = localStorage.getItem(STORAGE_KEYS.INVOICES);
-  return data ? JSON.parse(data) : [];
+export const getInvoices = async (): Promise<Invoice[]> => {
+  const { data, error } = await supabase
+    .from('invoices')
+    .select('*');
+    // Ordinamento lato client o qui se necessario, ma i filtri UI lo gestiscono già
+  
+  if (error) {
+    console.error('Error fetching invoices:', error);
+    return [];
+  }
+  return data as Invoice[];
 };
 
-// --- Calculations ---
+// --- Calculations (Synchronous logic remains the same) ---
 
 export const calculateInvoiceBalance = (invoice: Invoice): number => {
-  return invoice.rows.reduce((acc, row) => acc + (row.credit - row.debit), 0);
+  if (!invoice.rows || !Array.isArray(invoice.rows)) return 0;
+  return invoice.rows.reduce((acc, row) => acc + (Number(row.credit) - Number(row.debit)), 0);
 };
 
 export const getInvoiceInitialAmount = (invoice: Invoice): number => {
-  if (invoice.rows.length === 0) return 0;
-  return invoice.rows[0].credit;
+  if (!invoice.rows || invoice.rows.length === 0) return 0;
+  return Number(invoice.rows[0].credit);
 };
 
 // --- Write Functions (Actions) ---
 
-export const saveSupplier = (supplier: Omit<Supplier, 'id'> | Supplier): Supplier => {
-  const suppliers = getSuppliers();
-  let newSupplier: Supplier;
-
-  if ('id' in supplier) {
-    // Update
-    newSupplier = supplier as Supplier;
-    const index = suppliers.findIndex(s => s.id === supplier.id);
-    if (index !== -1) {
-      suppliers[index] = newSupplier;
-    }
-  } else {
-    // Create
-    newSupplier = { ...supplier, id: generateId() };
-    suppliers.push(newSupplier);
-  }
-
-  localStorage.setItem(STORAGE_KEYS.SUPPLIERS, JSON.stringify(suppliers));
-  return newSupplier;
-};
-
-export const deleteSupplier = (id: string): void => {
-  // Delete the supplier
-  const suppliers = getSuppliers().filter(s => s.id !== id);
-  localStorage.setItem(STORAGE_KEYS.SUPPLIERS, JSON.stringify(suppliers));
+export const saveSupplier = async (supplier: Omit<Supplier, 'id'> | Supplier): Promise<Supplier | null> => {
+  // Se ha un ID, è un update, altrimenti insert.
+  // Supabase 'upsert' gestisce entrambi se ID è presente, ma per sicurezza separiamo o usiamo upsert lasciando generare ID se manca.
   
-  // Cascade delete invoices associated with this supplier
-  const invoices = getInvoices().filter(i => i.supplier_id !== id);
-  localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(invoices));
-};
+  const { data, error } = await supabase
+    .from('suppliers')
+    .upsert(supplier)
+    .select()
+    .single();
 
-export const deleteAllSuppliers = (): void => {
-  localStorage.setItem(STORAGE_KEYS.SUPPLIERS, JSON.stringify([]));
-  localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify([]));
-};
-
-export const saveInvoice = (invoice: Omit<Invoice, 'id' | 'creation_date'> & { id?: string, creation_date?: string }): Invoice => {
-  const invoices = getInvoices();
-  let newInvoice: Invoice;
-
-  if (invoice.id) {
-    // Update
-    newInvoice = invoice as Invoice;
-    const index = invoices.findIndex(i => i.id === invoice.id);
-    if (index !== -1) {
-      invoices[index] = newInvoice;
-    }
-  } else {
-    // Create
-    newInvoice = {
-      ...invoice,
-      id: generateId(),
-      creation_date: new Date().toISOString(),
-    } as Invoice;
-    invoices.push(newInvoice);
+  if (error) {
+    console.error('Error saving supplier:', error);
+    return null;
   }
-
-  localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(invoices));
-  return newInvoice;
+  return data as Supplier;
 };
 
-export const deleteInvoice = (id: string): void => {
-  const invoices = getInvoices().filter(i => i.id !== id);
-  localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(invoices));
+export const deleteSupplier = async (id: string): Promise<void> => {
+  // Nota: Poiché abbiamo impostato "on delete cascade" nel database SQL,
+  // eliminando il fornitore si cancellano automaticamente le fatture.
+  const { error } = await supabase
+    .from('suppliers')
+    .delete()
+    .eq('id', id);
+
+  if (error) console.error('Error deleting supplier:', error);
 };
 
-// --- Backup & Restore ---
+export const deleteAllSuppliers = async (): Promise<void> => {
+  // Per cancellare tutto in modo sicuro senza vincoli
+  // Cancelliamo prima le fatture (anche se cascade lo farebbe, è più pulito)
+  await supabase.from('invoices').delete().neq('id', '00000000-0000-0000-0000-000000000000'); // Hack per "delete all" se non c'è where clause
+  await supabase.from('suppliers').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+};
 
-export const exportDatabase = () => {
+export const saveInvoice = async (invoice: any): Promise<Invoice | null> => {
+  // Assicuriamoci che 'rows' sia gestito correttamente
+  const payload = {
+    ...invoice,
+    // Se è un nuovo inserimento e manca creation_date, lo mettiamo (o lasciamo fare al DB)
+    creation_date: invoice.creation_date || new Date().toISOString()
+  };
+
+  // Rimuovi undefined ID per permettere a Postgres di generarne uno nuovo
+  if (!payload.id) delete payload.id;
+
+  const { data, error } = await supabase
+    .from('invoices')
+    .upsert(payload)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Error saving invoice:', error);
+    return null;
+  }
+  return data as Invoice;
+};
+
+export const deleteInvoice = async (id: string): Promise<void> => {
+  const { error } = await supabase
+    .from('invoices')
+    .delete()
+    .eq('id', id);
+
+  if (error) console.error('Error deleting invoice:', error);
+};
+
+// --- Backup & Restore (Modified for Async) ---
+
+export const exportDatabase = async () => {
+  const suppliers = await getSuppliers();
+  const invoices = await getInvoices();
+  
   return {
-    suppliers: getSuppliers(),
-    invoices: getInvoices(),
+    suppliers,
+    invoices,
     timestamp: new Date().toISOString(),
-    version: '1.0'
+    version: '2.0 (Supabase)'
   };
 };
 
-export const importDatabase = (jsonData: string): boolean => {
+export const importDatabase = async (jsonData: string): Promise<boolean> => {
   try {
     const data = JSON.parse(jsonData);
     
-    // Basic validation
     if (!Array.isArray(data.suppliers) || !Array.isArray(data.invoices)) {
       throw new Error('Invalid data format');
     }
 
-    localStorage.setItem(STORAGE_KEYS.SUPPLIERS, JSON.stringify(data.suppliers));
-    localStorage.setItem(STORAGE_KEYS.INVOICES, JSON.stringify(data.invoices));
+    // 1. Pulisci il database esistente
+    await deleteAllSuppliers();
+
+    // 2. Inserisci Fornitori
+    // Rimuoviamo gli ID dal JSON per lasciare che il nuovo DB ne generi di nuovi, 
+    // OPPURE manteniamo gli ID del backup per preservare le relazioni. 
+    // MANTENERE GLI ID è cruciale per le relazioni foreign key.
+    
+    if (data.suppliers.length > 0) {
+      const { error: supError } = await supabase
+        .from('suppliers')
+        .insert(data.suppliers);
+      if (supError) throw supError;
+    }
+
+    // 3. Inserisci Fatture
+    if (data.invoices.length > 0) {
+      const { error: invError } = await supabase
+        .from('invoices')
+        .insert(data.invoices);
+      if (invError) throw invError;
+    }
+
     return true;
   } catch (error) {
     console.error('Import failed:', error);
@@ -130,9 +163,6 @@ export const importDatabase = (jsonData: string): boolean => {
   }
 };
 
-// --- Seeding ---
-
 export const seedDatabase = () => {
-  // Intentionally empty to prevent auto-generation of example data.
-  // The app will start empty.
+  // Non necessario con database remoto persistente
 };

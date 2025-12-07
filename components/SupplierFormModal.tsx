@@ -18,14 +18,17 @@ export const SupplierFormModal: React.FC<SupplierFormModalProps> = ({ isOpen, on
     notes: '',
     is_merchandise: false
   });
+  const [isSaving, setIsSaving] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (formData.name) {
-      saveSupplier(formData as Omit<Supplier, 'id'>);
+      setIsSaving(true);
+      await saveSupplier(formData as Omit<Supplier, 'id'>);
       setFormData({ name: '', iban: '', email: '', phone: '', notes: '', is_merchandise: false });
-      onSave();
+      onSave(); // Trigger data refresh in App
       onClose();
+      setIsSaving(false);
     }
   };
 
@@ -98,9 +101,10 @@ export const SupplierFormModal: React.FC<SupplierFormModalProps> = ({ isOpen, on
         <div className="pt-4 flex justify-end">
           <button
             type="submit"
-            className="bg-primary-600 text-white px-6 py-2 rounded-lg hover:bg-primary-700 transition-colors"
+            disabled={isSaving}
+            className="bg-primary-600 text-white px-6 py-2 rounded-lg hover:bg-primary-700 transition-colors disabled:opacity-50"
           >
-            Salva Fornitore
+            {isSaving ? 'Salvataggio...' : 'Salva Fornitore'}
           </button>
         </div>
       </form>

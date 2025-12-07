@@ -1,5 +1,5 @@
 {
-  "name": "Fatture fornitori",
+  "name": "Supabase Fatture fornitori",
   "description": "Gestore completo per fornitori, fatture e scadenziario pagamenti con interfaccia in italiano.",
   "requestFramePermissions": []
 }

@@ -26,6 +26,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
   isOpen, onClose, supplierId, existingInvoice, onSave, supplierName 
 }) => {
   const [rows, setRows] = useState<InvoiceRow[]>([]);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -55,22 +56,24 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
     return rows.reduce((acc, row) => acc + (Number(row.credit) - Number(row.debit)), 0);
   };
 
-  const handleSave = () => {
+  const handleSave = async () => {
+    setIsSaving(true);
     const cleanRows = rows.map(r => ({
       ...r,
       credit: Number(r.credit),
       debit: Number(r.debit)
     }));
 
-    saveInvoice({
+    await saveInvoice({
       id: existingInvoice?.id,
       supplier_id: supplierId,
       rows: cleanRows,
       creation_date: existingInvoice?.creation_date
     });
 
-    onSave();
+    onSave(); // Refresh data
     onClose();
+    setIsSaving(false);
   };
 
   const balance = calculateTotal();
@@ -163,10 +166,11 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
             </div>
             <button 
               onClick={handleSave}
-              className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-6 py-2.5 rounded-lg font-medium shadow-sm transition-all"
+              disabled={isSaving}
+              className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-6 py-2.5 rounded-lg font-medium shadow-sm transition-all disabled:opacity-50"
             >
               <Save size={18} />
-              {existingInvoice ? 'Aggiorna' : 'Salva Registrazione'}
+              {isSaving ? 'Salvataggio...' : (existingInvoice ? 'Aggiorna' : 'Salva Registrazione')}
             </button>
           </div>
         </div>
