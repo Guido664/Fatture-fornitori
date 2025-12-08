@@ -128,6 +128,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
                   type="number"
                   step="0.01"
                   value={row.credit}
+                  onFocus={(e) => e.target.select()}
                   onChange={e => handleRowChange(row.id, 'credit', parseFloat(e.target.value) || 0)}
                   className="w-full p-2 text-sm border border-slate-300 rounded text-right focus:ring-2 focus:ring-primary-500 outline-none"
                 />
@@ -137,6 +138,7 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
                   type="number"
                   step="0.01"
                   value={row.debit}
+                  onFocus={(e) => e.target.select()}
                   onChange={e => handleRowChange(row.id, 'debit', parseFloat(e.target.value) || 0)}
                   className="w-full p-2 text-sm border border-slate-300 rounded text-right focus:ring-2 focus:ring-primary-500 outline-none"
                 />
