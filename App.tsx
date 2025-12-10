@@ -1,12 +1,16 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, Users, FileText, History, Trash2, AlertTriangle, Save, Download, Upload, Loader2 } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, History, Trash2, AlertTriangle, Save, Download, Upload, Loader2, LogOut, Key } from 'lucide-react';
+import { Session } from '@supabase/supabase-js';
+import { supabase } from './supabaseClient';
 import { Supplier, Invoice, InvoiceWithSupplier } from './types';
-import { getSuppliers, getInvoices, seedDatabase, calculateInvoiceBalance, getInvoiceInitialAmount, deleteSupplier, saveSupplier, exportDatabase, importDatabase, deleteAllSuppliers } from './services/storage';
+import { getSuppliers, getInvoices, calculateInvoiceBalance, getInvoiceInitialAmount, deleteSupplier, saveSupplier, exportDatabase, importDatabase, deleteAllSuppliers } from './services/storage';
 
 // Components
 import { SupplierFormModal } from './components/SupplierFormModal';
 import { InvoiceModal } from './components/InvoiceModal';
 import { Modal } from './components/ui/Modal';
+import { Login } from './components/Login';
+import { ChangePasswordModal } from './components/ChangePasswordModal';
 
 // --- Constants for Styles ---
 const LABEL_STYLE = "block text-sm font-bold text-slate-900 mb-1.5";
@@ -55,6 +59,10 @@ const InvoiceCard: React.FC<InvoiceCardProps> = ({ inv, onClick }) => (
 );
 
 const App = () => {
+  // Auth State
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+
   const [activeTab, setActiveTab] = useState(0);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [invoices, setInvoices] = useState<Invoice[]>([]);
@@ -67,6 +75,7 @@ const App = () => {
   const [isSupplierModalOpen, setSupplierModalOpen] = useState(false);
   const [supplierToDelete, setSupplierToDelete] = useState<string | null>(null);
   const [isDeleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
+  const [isChangePasswordOpen, setChangePasswordOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<{ isOpen: boolean, supplierId: string, invoice: Invoice | null }>({
     isOpen: false,
     supplierId: '',
@@ -75,8 +84,26 @@ const App = () => {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Check Auth Session
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
   // Load Data
   const refreshData = async () => {
+    if (!session) return;
     setIsLoading(true);
     try {
       const [s, i] = await Promise.all([getSuppliers(), getInvoices()]);
@@ -90,8 +117,10 @@ const App = () => {
   };
 
   useEffect(() => {
-    refreshData();
-  }, []);
+    if (session) {
+      refreshData();
+    }
+  }, [session]);
 
   // Helper to enrich invoices
   const getEnrichedInvoices = (): InvoiceWithSupplier[] => {
@@ -180,6 +209,10 @@ const App = () => {
     e.target.value = '';
   };
 
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
   // --- Views ---
 
   const LoadingOverlay = () => (
@@ -190,6 +223,19 @@ const App = () => {
       </div>
     </div>
   );
+
+  // Render Logic
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+        <Loader2 className="animate-spin text-primary-600 w-8 h-8" />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <Login />;
+  }
 
   // TAB 1: Supplier List
   const SupplierListTab = () => {
@@ -622,6 +668,23 @@ const App = () => {
                className="hidden" 
                accept=".json" 
              />
+             <div className="h-6 w-px bg-slate-200 mx-2"></div>
+             <button
+               onClick={() => setChangePasswordOpen(true)}
+               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
+               title="Cambia Password"
+             >
+               <Key size={16} />
+               Password
+             </button>
+             <button
+               onClick={handleLogout}
+               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
+               title="Esci"
+             >
+               <LogOut size={16} />
+               Esci
+             </button>
           </div>
         </div>
       </div>
@@ -648,6 +711,11 @@ const App = () => {
         existingInvoice={editingInvoice.invoice}
         supplierName={suppliers.find(s => s.id === editingInvoice.supplierId)?.name || ''}
         onSave={refreshData}
+      />
+
+      <ChangePasswordModal 
+        isOpen={isChangePasswordOpen}
+        onClose={() => setChangePasswordOpen(false)}
       />
 
       {/* Delete Modals */}
