@@ -215,6 +215,12 @@ const App = () => {
   };
 
   const handleLogout = async () => {
+    // Pulisci lo stato locale immediamente per evitare flash di dati vecchi al prossimo login
+    setSuppliers([]);
+    setInvoices([]);
+    setSelectedSupplierId(null);
+    setActiveTab(0);
+    
     await supabase.auth.signOut();
   };
 
