@@ -1,7 +1,10 @@
+
 import { supabase } from '../supabaseClient';
 import { Supplier, Invoice } from '../types';
 
 // --- Read Functions (Getters) ---
+// Nota: Con RLS attivo su Supabase, queste query restituiranno
+// automaticamente solo i dati appartenenti all'utente loggato.
 
 export const getSuppliers = async (): Promise<Supplier[]> => {
   const { data, error } = await supabase
@@ -20,7 +23,6 @@ export const getInvoices = async (): Promise<Invoice[]> => {
   const { data, error } = await supabase
     .from('invoices')
     .select('*');
-    // Ordinamento lato client o qui se necessario, ma i filtri UI lo gestiscono già
   
   if (error) {
     console.error('Error fetching invoices:', error);
@@ -44,12 +46,22 @@ export const getInvoiceInitialAmount = (invoice: Invoice): number => {
 // --- Write Functions (Actions) ---
 
 export const saveSupplier = async (supplier: Omit<Supplier, 'id'> | Supplier): Promise<Supplier | null> => {
-  // Se ha un ID, è un update, altrimenti insert.
-  // Supabase 'upsert' gestisce entrambi se ID è presente, ma per sicurezza separiamo o usiamo upsert lasciando generare ID se manca.
+  // Recupera l'utente corrente per associarlo al dato
+  const { data: { user } } = await supabase.auth.getUser();
+  
+  if (!user) {
+    console.error("User not authenticated");
+    return null;
+  }
+
+  const payload = {
+    ...supplier,
+    user_id: user.id // Associa il record all'utente corrente
+  };
   
   const { data, error } = await supabase
     .from('suppliers')
-    .upsert(supplier)
+    .upsert(payload)
     .select()
     .single();
 
@@ -61,8 +73,6 @@ export const saveSupplier = async (supplier: Omit<Supplier, 'id'> | Supplier): P
 };
 
 export const deleteSupplier = async (id: string): Promise<void> => {
-  // Nota: Poiché abbiamo impostato "on delete cascade" nel database SQL,
-  // eliminando il fornitore si cancellano automaticamente le fatture.
   const { error } = await supabase
     .from('suppliers')
     .delete()
@@ -72,17 +82,23 @@ export const deleteSupplier = async (id: string): Promise<void> => {
 };
 
 export const deleteAllSuppliers = async (): Promise<void> => {
-  // Per cancellare tutto in modo sicuro senza vincoli
-  // Cancelliamo prima le fatture (anche se cascade lo farebbe, è più pulito)
-  await supabase.from('invoices').delete().neq('id', '00000000-0000-0000-0000-000000000000'); // Hack per "delete all" se non c'è where clause
+  // Cancella solo i dati dell'utente corrente (grazie a RLS lato server)
+  await supabase.from('invoices').delete().neq('id', '00000000-0000-0000-0000-000000000000'); 
   await supabase.from('suppliers').delete().neq('id', '00000000-0000-0000-0000-000000000000');
 };
 
 export const saveInvoice = async (invoice: any): Promise<Invoice | null> => {
-  // Assicuriamoci che 'rows' sia gestito correttamente
+  // Recupera l'utente corrente
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    console.error("User not authenticated");
+    return null;
+  }
+
   const payload = {
     ...invoice,
-    // Se è un nuovo inserimento e manca creation_date, lo mettiamo (o lasciamo fare al DB)
+    user_id: user.id, // Associa il record all'utente
     creation_date: invoice.creation_date || new Date().toISOString()
   };
 
@@ -111,9 +127,10 @@ export const deleteInvoice = async (id: string): Promise<void> => {
   if (error) console.error('Error deleting invoice:', error);
 };
 
-// --- Backup & Restore (Modified for Async) ---
+// --- Backup & Restore ---
 
 export const exportDatabase = async () => {
+  // Scaricherà solo i dati dell'utente corrente grazie a RLS
   const suppliers = await getSuppliers();
   const invoices = await getInvoices();
   
@@ -127,32 +144,42 @@ export const exportDatabase = async () => {
 
 export const importDatabase = async (jsonData: string): Promise<boolean> => {
   try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) throw new Error("Utente non loggato");
+
     const data = JSON.parse(jsonData);
     
     if (!Array.isArray(data.suppliers) || !Array.isArray(data.invoices)) {
       throw new Error('Invalid data format');
     }
 
-    // 1. Pulisci il database esistente
+    // 1. Pulisci il database esistente (solo dati utente corrente)
     await deleteAllSuppliers();
 
-    // 2. Inserisci Fornitori
-    // Rimuoviamo gli ID dal JSON per lasciare che il nuovo DB ne generi di nuovi, 
-    // OPPURE manteniamo gli ID del backup per preservare le relazioni. 
-    // MANTENERE GLI ID è cruciale per le relazioni foreign key.
-    
-    if (data.suppliers.length > 0) {
+    // 2. Prepara i dati aggiungendo user_id
+    const suppliersToImport = data.suppliers.map((s: any) => ({
+      ...s,
+      user_id: user.id
+    }));
+
+    const invoicesToImport = data.invoices.map((i: any) => ({
+      ...i,
+      user_id: user.id
+    }));
+
+    // 3. Inserisci Fornitori
+    if (suppliersToImport.length > 0) {
       const { error: supError } = await supabase
         .from('suppliers')
-        .insert(data.suppliers);
+        .insert(suppliersToImport);
       if (supError) throw supError;
     }
 
-    // 3. Inserisci Fatture
-    if (data.invoices.length > 0) {
+    // 4. Inserisci Fatture
+    if (invoicesToImport.length > 0) {
       const { error: invError } = await supabase
         .from('invoices')
-        .insert(data.invoices);
+        .insert(invoicesToImport);
       if (invError) throw invError;
     }
 
@@ -164,5 +191,5 @@ export const importDatabase = async (jsonData: string): Promise<boolean> => {
 };
 
 export const seedDatabase = () => {
-  // Non necessario con database remoto persistente
+  // Non necessario
 };

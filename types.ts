@@ -1,5 +1,7 @@
+
 export interface Supplier {
   id: string;
+  user_id?: string; // ID dell'utente proprietario
   name: string;
   iban: string;
   email: string;
@@ -19,6 +21,7 @@ export interface InvoiceRow {
 
 export interface Invoice {
   id: string;
+  user_id?: string; // ID dell'utente proprietario
   supplier_id: string;
   creation_date: string;
   rows: InvoiceRow[];
