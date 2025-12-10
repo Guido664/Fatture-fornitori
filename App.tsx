@@ -93,9 +93,14 @@ const App = () => {
 
     const {
       data: { subscription },
-    } = supabase.auth.onAuthStateChange((_event, session) => {
+    } = supabase.auth.onAuthStateChange((event, session) => {
       setSession(session);
       setAuthLoading(false);
+      
+      // Se l'evento è un recupero password, apri il modale di cambio password
+      if (event === 'PASSWORD_RECOVERY') {
+        setChangePasswordOpen(true);
+      }
     });
 
     return () => subscription.unsubscribe();
@@ -639,63 +644,68 @@ const App = () => {
         <div className="max-w-7xl mx-auto flex items-center justify-between px-6">
           <div className="flex">
             <TabButton active={activeTab === 0} onClick={() => setActiveTab(0)} icon={Users} label="Elenco Fornitori" />
-            <TabButton active={activeTab === 1} onClick={() => setActiveTab(1)} icon={FileText} label="Dettaglio & Fatture" />
-            <TabButton active={activeTab === 2} onClick={() => setActiveTab(2)} icon={LayoutDashboard} label="Elenco Fatture" />
+            <TabButton active={activeTab === 1} onClick={() => setActiveTab(1)} icon={FileText} label="Dettaglio Fornitore" />
+            <TabButton active={activeTab === 2} onClick={() => setActiveTab(2)} icon={LayoutDashboard} label="Scadenziario" />
             <TabButton active={activeTab === 3} onClick={() => setActiveTab(3)} icon={History} label="Storico" />
           </div>
-          
-          <div className="flex items-center gap-3">
-             <button 
-               onClick={handleExportData}
-               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
-               title="Esporta dati da Supabase"
-             >
-               <Download size={16} />
-               Esporta
-             </button>
-             <button 
-               onClick={handleImportClick}
-               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
-               title="Importa dati su Supabase"
-             >
-               <Upload size={16} />
-               Importa
-             </button>
+
+          <div className="flex items-center gap-4">
+             {/* User info / Logout */}
+             <div className="hidden md:flex flex-col items-end mr-2">
+                <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Utente</span>
+                <span className="text-sm font-medium text-slate-700">{session.user.email}</span>
+             </div>
+             
+             <div className="h-8 w-px bg-slate-200 mx-2 hidden md:block"></div>
+
+             <div className="flex gap-2">
+                <button
+                    onClick={() => setChangePasswordOpen(true)}
+                    className="p-2 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-full transition-colors"
+                    title="Cambia Password"
+                >
+                   <Key size={20} />
+                </button>
+                <button
+                    onClick={handleExportData}
+                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                    title="Esporta Backup"
+                >
+                    <Download size={20} />
+                </button>
+                <button
+                    onClick={handleImportClick}
+                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+                    title="Importa Backup"
+                >
+                    <Upload size={20} />
+                </button>
+                <button
+                    onClick={handleLogout}
+                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
+                    title="Esci"
+                >
+                    <LogOut size={20} />
+                </button>
+             </div>
              <input 
-               type="file" 
-               ref={fileInputRef} 
-               onChange={handleFileChange} 
-               className="hidden" 
-               accept=".json" 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileChange} 
+                className="hidden" 
+                accept=".json"
              />
-             <div className="h-6 w-px bg-slate-200 mx-2"></div>
-             <button
-               onClick={() => setChangePasswordOpen(true)}
-               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-md transition-colors"
-               title="Cambia Password"
-             >
-               <Key size={16} />
-               Password
-             </button>
-             <button
-               onClick={handleLogout}
-               className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-red-600 bg-red-50 hover:bg-red-100 rounded-md transition-colors"
-               title="Esci"
-             >
-               <LogOut size={16} />
-               Esci
-             </button>
           </div>
         </div>
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-hidden">
+      <div className="flex-1 overflow-hidden relative">
         {activeTab === 0 && <SupplierListTab />}
         {activeTab === 1 && <SupplierDetailTab />}
         {activeTab === 2 && <ActiveInvoicesTab />}
         {activeTab === 3 && <HistoryTab />}
-      </main>
+      </div>
 
       {/* Modals */}
       <SupplierFormModal 
@@ -703,8 +713,8 @@ const App = () => {
         onClose={() => setSupplierModalOpen(false)} 
         onSave={refreshData} 
       />
-      
-      <InvoiceModal 
+
+      <InvoiceModal
         isOpen={editingInvoice.isOpen}
         onClose={() => setEditingInvoice({ ...editingInvoice, isOpen: false })}
         supplierId={editingInvoice.supplierId}
@@ -713,79 +723,73 @@ const App = () => {
         onSave={refreshData}
       />
 
+      <Modal
+        isOpen={!!supplierToDelete}
+        onClose={() => setSupplierToDelete(null)}
+        title="Conferma eliminazione"
+        maxWidth="max-w-md"
+      >
+        <div className="text-center p-4">
+           <div className="bg-red-100 p-3 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-4">
+             <AlertTriangle className="text-red-600" size={24} />
+           </div>
+           <h3 className="text-lg font-bold text-slate-800 mb-2">Sei sicuro?</h3>
+           <p className="text-slate-600 mb-6">
+             Stai per eliminare questo fornitore e tutte le fatture associate. L'azione non è reversibile.
+           </p>
+           <div className="flex justify-center gap-3">
+             <button 
+               onClick={() => setSupplierToDelete(null)}
+               className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 font-medium"
+             >
+               Annulla
+             </button>
+             <button 
+               onClick={confirmDeleteSupplier}
+               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium"
+             >
+               Elimina
+             </button>
+           </div>
+        </div>
+      </Modal>
+
+      <Modal
+        isOpen={isDeleteAllModalOpen}
+        onClose={() => setDeleteAllModalOpen(false)}
+        title="⚠ ZONE PERICOLOSA: ELIMINA TUTTO"
+        maxWidth="max-w-md"
+      >
+        <div className="text-center p-4">
+           <div className="bg-red-100 p-3 rounded-full w-12 h-12 flex items-center justify-center mx-auto mb-4">
+             <Trash2 className="text-red-600" size={24} />
+           </div>
+           <h3 className="text-lg font-bold text-slate-800 mb-2">Eliminare TUTTI i dati?</h3>
+           <p className="text-slate-600 mb-6">
+             Questa azione cancellerà <b>tutti i fornitori e tutte le fatture</b> dal database. Assicurati di avere un backup.
+           </p>
+           <div className="flex justify-center gap-3">
+             <button 
+               onClick={() => setDeleteAllModalOpen(false)}
+               className="px-4 py-2 border border-slate-300 rounded-lg text-slate-700 hover:bg-slate-50 font-medium"
+             >
+               Annulla
+             </button>
+             <button 
+               onClick={confirmDeleteAllSuppliers}
+               className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg font-medium"
+             >
+               CONFERMA ELIMINAZIONE TOTALE
+             </button>
+           </div>
+        </div>
+      </Modal>
+
       <ChangePasswordModal 
         isOpen={isChangePasswordOpen}
         onClose={() => setChangePasswordOpen(false)}
       />
 
-      {/* Delete Modals */}
-      <Modal 
-        isOpen={!!supplierToDelete}
-        onClose={() => setSupplierToDelete(null)}
-        title="Conferma Eliminazione"
-        maxWidth="max-w-md"
-      >
-        <div className="p-4">
-          <div className="flex items-center gap-4 text-red-600 bg-red-50 p-4 rounded-lg mb-6">
-             <AlertTriangle size={32} />
-             <div>
-                <p className="font-bold text-lg">Attenzione!</p>
-                <p className="text-sm">Questa azione è irreversibile.</p>
-             </div>
-          </div>
-          <p className="text-slate-700 mb-8 text-center text-lg">
-            Sei sicuro di voler eliminare questo fornitore e tutte le sue fatture?
-          </p>
-          <div className="flex justify-end gap-3">
-            <button 
-              onClick={() => setSupplierToDelete(null)}
-              className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg"
-            >
-              Annulla
-            </button>
-            <button 
-              onClick={confirmDeleteSupplier}
-              className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 shadow-md font-medium"
-            >
-              Conferma Eliminazione
-            </button>
-          </div>
-        </div>
-      </Modal>
-
-      <Modal 
-        isOpen={isDeleteAllModalOpen}
-        onClose={() => setDeleteAllModalOpen(false)}
-        title="Elimina Tutti i Fornitori"
-        maxWidth="max-w-md"
-      >
-        <div className="p-4">
-          <div className="flex items-center gap-4 text-red-600 bg-red-50 p-4 rounded-lg mb-6">
-             <AlertTriangle size={32} />
-             <div>
-                <p className="font-bold text-lg">Attenzione!</p>
-                <p className="text-sm">Stai per eliminare l'intero database remoto.</p>
-             </div>
-          </div>
-          <p className="text-slate-700 mb-8 text-center text-lg">
-            Sei sicuro di voler eliminare <b>tutti i fornitori</b> e le relative fatture da Supabase?
-          </p>
-          <div className="flex justify-end gap-3">
-            <button 
-              onClick={() => setDeleteAllModalOpen(false)}
-              className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-lg"
-            >
-              Annulla
-            </button>
-            <button 
-              onClick={confirmDeleteAllSuppliers}
-              className="px-6 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 shadow-md font-medium"
-            >
-              Elimina Tutto
-            </button>
-          </div>
-        </div>
-      </Modal>
     </div>
   );
 };
