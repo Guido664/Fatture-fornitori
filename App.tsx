@@ -1,9 +1,10 @@
+
 import React, { useState, useEffect, useRef } from 'react';
-import { LayoutDashboard, Users, FileText, History, Trash2, AlertTriangle, Save, Download, Upload, Loader2, LogOut, Key } from 'lucide-react';
+import { LayoutDashboard, Users, FileText, History, Trash2, AlertTriangle, Save, Download, Upload, Loader2, LogOut, Key, Printer } from 'lucide-react';
 import { Session } from '@supabase/supabase-js';
 import { supabase } from './supabaseClient';
 import { Supplier, Invoice, InvoiceWithSupplier } from './types';
-import { getSuppliers, getInvoices, calculateInvoiceBalance, getInvoiceInitialAmount, deleteSupplier, saveSupplier, exportDatabase, importDatabase, deleteAllSuppliers } from './services/storage';
+import { getSuppliers, getInvoices, calculateInvoiceBalance, getInvoiceInitialAmount, deleteSupplier, saveSupplier, exportDatabase, importDatabase, deleteAllSuppliers, deleteInvoice } from './services/storage';
 
 // Components
 import { SupplierFormModal } from './components/SupplierFormModal';
@@ -21,7 +22,7 @@ const INPUT_SM_STYLE = "p-2 border border-slate-300 rounded focus:ring-2 focus:r
 const TabButton = ({ active, onClick, icon: Icon, label }: any) => (
   <button
     onClick={onClick}
-    className={`flex items-center gap-2 px-6 py-4 border-b-2 transition-all ${
+    className={`flex items-center gap-2 px-6 py-4 border-b-2 transition-all print:hidden ${
       active 
         ? 'border-primary-600 text-primary-700 bg-primary-50/50 font-medium' 
         : 'border-transparent text-slate-500 hover:text-slate-700 hover:bg-slate-50'
@@ -74,6 +75,7 @@ const App = () => {
   // Modals
   const [isSupplierModalOpen, setSupplierModalOpen] = useState(false);
   const [supplierToDelete, setSupplierToDelete] = useState<string | null>(null);
+  const [invoiceToDelete, setInvoiceToDelete] = useState<string | null>(null); // NEW: State for invoice deletion confirmation
   const [isDeleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
   const [isChangePasswordOpen, setChangePasswordOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<{ isOpen: boolean, supplierId: string, invoice: Invoice | null }>({
@@ -143,7 +145,32 @@ const App = () => {
 
   const enrichedInvoices = getEnrichedInvoices();
 
-  // Handle Deletion
+  // Handle Invoice Deletion Trigger
+  const handleRequestInvoiceDelete = (id: string) => {
+    // Open the confirmation modal instead of window.confirm
+    setInvoiceToDelete(id);
+  };
+
+  // Perform Invoice Deletion
+  const confirmDeleteInvoice = async () => {
+    if (!invoiceToDelete) return;
+    
+    setIsLoading(true);
+    try {
+      await deleteInvoice(invoiceToDelete);
+      // Close the editing modal as well since the invoice is gone
+      setEditingInvoice(prev => ({ ...prev, isOpen: false, invoice: null }));
+      setInvoiceToDelete(null);
+      await refreshData();
+    } catch (e) {
+      console.error("Error deleting invoice", e);
+      alert("Errore durante l'eliminazione della fattura");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Handle Supplier Deletion
   const confirmDeleteSupplier = async () => {
     if (supplierToDelete) {
       setIsLoading(true);
@@ -215,19 +242,15 @@ const App = () => {
   };
 
   const handleLogout = async () => {
-    // Pulisci lo stato locale immediamente per evitare flash di dati vecchi al prossimo login
     setSuppliers([]);
     setInvoices([]);
     setSelectedSupplierId(null);
     setActiveTab(0);
-    
     await supabase.auth.signOut();
   };
 
-  // --- Views ---
-
   const LoadingOverlay = () => (
-    <div className="fixed inset-0 bg-white/50 backdrop-blur-sm z-[60] flex items-center justify-center">
+    <div className="fixed inset-0 bg-white/50 backdrop-blur-sm z-[60] flex items-center justify-center print:hidden">
       <div className="bg-white p-4 rounded-lg shadow-xl flex items-center gap-3">
         <Loader2 className="animate-spin text-primary-600" />
         <span className="font-medium text-slate-700">Caricamento...</span>
@@ -235,7 +258,6 @@ const App = () => {
     </div>
   );
 
-  // Render Logic
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-100">
@@ -463,17 +485,39 @@ const App = () => {
     );
   };
 
-  // TAB 3: Global Dashboard
+  // TAB 3: Global Dashboard (Scadenziario)
   const ActiveInvoicesTab = () => {
+    const [search, setSearch] = useState('');
+    const [month, setMonth] = useState('');
+    const [year, setYear] = useState('');
+    const [dateFrom, setDateFrom] = useState('');
+    const [dateTo, setDateTo] = useState('');
+    const [onlyMerch, setOnlyMerch] = useState(false);
+
+    const years = Array.from(new Set(enrichedInvoices.map(i => new Date(i.rows[0]?.date).getFullYear()))).sort().reverse();
+
+    const applyFilters = (invList: InvoiceWithSupplier[]) => {
+      return invList.filter(i => {
+        if (search && !i.supplier.name.toLowerCase().includes(search.toLowerCase())) return false;
+        
+        const d = new Date(i.rows[0]?.date);
+        if (month && (d.getMonth() + 1).toString() !== month) return false;
+        if (year && d.getFullYear().toString() !== year) return false;
+        if (dateFrom && i.rows[0]?.date < dateFrom) return false;
+        if (dateTo && i.rows[0]?.date > dateTo) return false;
+        
+        return true;
+      });
+    };
+
     const activeInvoices = enrichedInvoices.filter(i => i.balance !== 0);
     
-    const merchandiseInvoices = activeInvoices
-      .filter(i => i.supplier.is_merchandise)
-      .sort((a, b) => new Date(a.rows[0]?.date).getTime() - new Date(b.rows[0]?.date).getTime());
-    
-    const toPayInvoices = activeInvoices
-      .filter(i => !i.supplier.is_merchandise && i.balance > 0)
-      .sort((a, b) => new Date(a.rows[0]?.date).getTime() - new Date(b.rows[0]?.date).getTime());
+    let merchandiseInvoices = activeInvoices.filter(i => i.supplier.is_merchandise);
+    let toPayInvoices = activeInvoices.filter(i => !i.supplier.is_merchandise && i.balance > 0);
+
+    // Apply global filters
+    merchandiseInvoices = applyFilters(merchandiseInvoices).sort((a, b) => new Date(a.rows[0]?.date).getTime() - new Date(b.rows[0]?.date).getTime());
+    toPayInvoices = applyFilters(toPayInvoices).sort((a, b) => new Date(a.rows[0]?.date).getTime() - new Date(b.rows[0]?.date).getTime());
 
     const sumMerch = merchandiseInvoices.reduce((a, b) => a + b.balance, 0);
     const sumPay = toPayInvoices.reduce((a, b) => a + b.balance, 0);
@@ -482,41 +526,241 @@ const App = () => {
       setEditingInvoice({ isOpen: true, supplierId: inv.supplier_id, invoice: inv });
     };
 
+    const resetFilters = () => {
+      setSearch('');
+      setMonth('');
+      setYear('');
+      setDateFrom('');
+      setDateTo('');
+      setOnlyMerch(false);
+    };
+
+    const handlePrint = () => {
+        // 1. Prepare Content
+        const title = "Scadenziario Fornitori";
+        const printDate = new Date().toLocaleDateString('it-IT');
+        
+        // Helper for table rows
+        const renderTableRows = (list: InvoiceWithSupplier[]) => {
+            if (list.length === 0) return '<tr><td colspan="4" style="text-align:center; padding: 10px; font-style: italic;">Nessuna scadenza</td></tr>';
+            return list.map(inv => `
+                <tr>
+                    <td>${formatDate(inv.rows[0]?.date)}</td>
+                    <td><strong>${inv.supplier.name}</strong></td>
+                    <td>${inv.rows[0]?.description || '-'}</td>
+                    <td style="text-align: right; white-space: nowrap;">${formatCurrency(inv.balance)}</td>
+                </tr>
+            `).join('');
+        };
+
+        const merchRows = renderTableRows(merchandiseInvoices);
+        const payRows = renderTableRows(toPayInvoices);
+
+        const html = `
+        <!DOCTYPE html>
+        <html lang="it">
+        <head>
+            <meta charset="UTF-8">
+            <title>Stampa Scadenziario</title>
+            <style>
+                body { font-family: 'Helvetica', 'Arial', sans-serif; padding: 40px; color: #333; }
+                h1 { font-size: 24px; margin-bottom: 5px; color: #1e293b; }
+                .meta { font-size: 14px; color: #64748b; margin-bottom: 30px; }
+                .section { margin-bottom: 40px; }
+                .section-title { font-size: 16px; font-weight: bold; text-transform: uppercase; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; }
+                table { width: 100%; border-collapse: collapse; font-size: 13px; }
+                th { text-align: left; padding: 10px 5px; border-bottom: 1px solid #cbd5e1; color: #475569; font-weight: 600; }
+                td { padding: 8px 5px; border-bottom: 1px solid #f1f5f9; }
+                tr:last-child td { border-bottom: none; }
+                .amount-col { text-align: right; }
+                .total-row { font-weight: bold; font-size: 15px; margin-top: 10px; text-align: right; color: #0f172a; }
+                .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: bold; }
+                .badge-orange { background: #ffedd5; color: #c2410c; }
+                .badge-red { background: #fee2e2; color: #b91c1c; }
+                @media print {
+                    @page { margin: 1cm; }
+                    body { padding: 0; }
+                }
+            </style>
+        </head>
+        <body>
+            <h1>${title}</h1>
+            <div class="meta">Generato il ${printDate}</div>
+
+            <div class="section">
+                <div class="section-title">
+                    <span>Merce Conto Acquisti</span>
+                    <span class="badge badge-orange">${merchandiseInvoices.length} scadenze</span>
+                </div>
+                <table>
+                    <thead>
+                        <tr>
+                            <th width="15%">Data</th>
+                            <th width="30%">Fornitore</th>
+                            <th width="35%">Descrizione</th>
+                            <th width="20%" class="amount-col">Importo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${merchRows}
+                    </tbody>
+                </table>
+                <div class="total-row">Totale: ${formatCurrency(sumMerch)}</div>
+            </div>
+
+            ${!onlyMerch ? `
+            <div class="section">
+                <div class="section-title">
+                    <span>Spese Generali / Servizi</span>
+                    <span class="badge badge-red">${toPayInvoices.length} scadenze</span>
+                </div>
+                 <table>
+                    <thead>
+                        <tr>
+                            <th width="15%">Data</th>
+                            <th width="30%">Fornitore</th>
+                            <th width="35%">Descrizione</th>
+                            <th width="20%" class="amount-col">Importo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${payRows}
+                    </tbody>
+                </table>
+                <div class="total-row">Totale: ${formatCurrency(sumPay)}</div>
+            </div>
+            ` : ''}
+
+            <div style="margin-top: 50px; padding-top: 20px; border-top: 2px solid #333; text-align: right; font-size: 18px; font-weight: bold;">
+                TOTALE COMPLESSIVO: ${formatCurrency(sumMerch + (onlyMerch ? 0 : sumPay))}
+            </div>
+        </body>
+        </html>
+        `;
+
+        const printWindow = window.open('', '_blank', 'width=900,height=800');
+        if (printWindow) {
+            printWindow.document.write(html);
+            printWindow.document.close();
+            printWindow.focus();
+            // Wait for potential rendering
+            setTimeout(() => {
+                printWindow.print();
+                // Optional: close after print
+                // printWindow.close(); 
+            }, 500);
+        } else {
+            alert("Impossibile aprire la finestra di stampa. Controlla il blocco popup.");
+        }
+    };
+
     return (
-      <div className="p-6 max-w-7xl mx-auto space-y-8">
-        <section>
-          <div className="flex items-center gap-3 mb-4">
-            <h3 className="text-lg font-bold text-slate-800">📦 MERCE CONTO ACQUISTI</h3>
-            <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full font-bold">{merchandiseInvoices.length}</span>
+      <div className="p-6 max-w-7xl mx-auto h-[calc(100vh-100px)] flex flex-col">
+        {/* Filter Bar */}
+        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-wrap gap-4 items-end">
+          <div className="flex-1 min-w-[200px]">
+            <input 
+              type="text" 
+              placeholder="Cerca fornitore..." 
+              className={INPUT_SM_STYLE + " w-full"}
+              value={search} onChange={e => setSearch(e.target.value)}
+            />
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {merchandiseInvoices.map(inv => <InvoiceCard key={inv.id} inv={inv} onClick={handleInvoiceClick} />)}
-            {merchandiseInvoices.length === 0 && <div className="text-slate-400 italic text-sm">Nessuna fattura presente.</div>}
+          
+          <div className="flex flex-col">
+            <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Mese</span>
+            <select className={`${INPUT_SM_STYLE} w-32`} value={month} onChange={e => setMonth(e.target.value)}>
+              <option value="">Tutti</option>
+              {[...Array(12)].map((_, i) => <option key={i} value={i+1}>{new Date(0, i).toLocaleString('it-IT', { month: 'long' })}</option>)}
+            </select>
           </div>
-          <div className="mt-2 text-right text-orange-600 font-bold text-sm">
-            Totale: {formatCurrency(sumMerch)}
-          </div>
-        </section>
 
-        <div className="border-t border-slate-200 my-4"></div>
+          <div className="flex flex-col">
+             <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Anno</span>
+             <select className={`${INPUT_SM_STYLE} w-24`} value={year} onChange={e => setYear(e.target.value)}>
+               <option value="">Tutti</option>
+               {years.map(y => <option key={y} value={y}>{y}</option>)}
+             </select>
+          </div>
+          
+           <div className="flex flex-col">
+             <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Dal</span>
+             <input type="date" className={INPUT_SM_STYLE} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          </div>
 
-        <section>
-          <div className="flex items-center gap-3 mb-4">
-            <h3 className="text-lg font-bold text-slate-800">💰 DA SALDARE (Servizi)</h3>
-            <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-bold">{toPayInvoices.length}</span>
+          <div className="flex flex-col">
+             <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Al</span>
+             <input type="date" className={INPUT_SM_STYLE} value={dateTo} onChange={e => setDateTo(e.target.value)} />
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {toPayInvoices.map(inv => <InvoiceCard key={inv.id} inv={inv} onClick={handleInvoiceClick} />)}
-            {toPayInvoices.length === 0 && <div className="text-slate-400 italic text-sm">Tutto saldato!</div>}
+
+          <div className="flex items-center gap-2 pb-2">
+            <input type="checkbox" id="active_merch" checked={onlyMerch} onChange={e => setOnlyMerch(e.target.checked)} className="rounded text-primary-600" />
+            <label htmlFor="active_merch" className="text-sm text-slate-700 font-medium">Solo Merce</label>
           </div>
-          <div className="mt-2 text-right text-red-600 font-bold text-sm">
-            Totale: {formatCurrency(sumPay)}
+          
+          <div className="ml-auto flex gap-2">
+             <button 
+                onClick={resetFilters}
+                className="px-3 py-2 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-1 transition-colors"
+                title="Resetta Filtri"
+              >
+                <History size={16} /> Reset
+              </button>
+             <button 
+                onClick={handlePrint}
+                className="px-3 py-2 text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg flex items-center gap-1 transition-colors font-medium"
+                title="Stampa Scadenziario"
+              >
+                <Printer size={18} /> Stampa PDF
+              </button>
           </div>
-        </section>
+        </div>
+
+        {/* MAIN CONTENT AREA */}
+        <div className="flex-1 overflow-y-auto space-y-8 pr-2">
+          
+          <section>
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <h3 className="text-lg font-bold text-slate-800">📦 MERCE CONTO ACQUISTI</h3>
+                <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full font-bold">{merchandiseInvoices.length}</span>
+              </div>
+              <div className="text-orange-600 font-bold text-lg">
+                Totale: {formatCurrency(sumMerch)}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {merchandiseInvoices.map(inv => <InvoiceCard key={inv.id} inv={inv} onClick={handleInvoiceClick} />)}
+              {merchandiseInvoices.length === 0 && <div className="text-slate-400 italic text-sm">Nessuna fattura presente.</div>}
+            </div>
+          </section>
+
+          {!onlyMerch && (
+            <>
+              <div className="border-t border-slate-200 my-4"></div>
+
+              <section>
+                <div className="flex items-center justify-between mb-4">
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-lg font-bold text-slate-800">💰 DA SALDARE (Servizi)</h3>
+                    <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-bold">{toPayInvoices.length}</span>
+                  </div>
+                  <div className="text-red-600 font-bold text-lg">
+                    Totale: {formatCurrency(sumPay)}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {toPayInvoices.map(inv => <InvoiceCard key={inv.id} inv={inv} onClick={handleInvoiceClick} />)}
+                  {toPayInvoices.length === 0 && <div className="text-slate-400 italic text-sm">Tutto saldato!</div>}
+                </div>
+              </section>
+            </>
+          )}
+        </div>
       </div>
     );
   };
-
+  
   // TAB 4: History
   const HistoryTab = () => {
     const [search, setSearch] = useState('');
@@ -544,9 +788,85 @@ const App = () => {
 
     const totalSettled = historyInvoices.reduce((a, b) => a + b.initialAmount, 0);
 
+    const handlePrintHistory = () => {
+        const title = "Storico Fatture Saldate";
+        const printDate = new Date().toLocaleDateString('it-IT');
+        
+        const rows = historyInvoices.length === 0 
+            ? '<tr><td colspan="5" style="text-align:center; padding: 10px; font-style: italic;">Nessuna fattura trovata</td></tr>'
+            : historyInvoices.map(inv => `
+            <tr>
+                <td>${formatDate(inv.rows[0]?.date)}</td>
+                <td><strong>${inv.supplier.name}</strong></td>
+                <td>${inv.rows[0]?.description || '-'}</td>
+                <td>${inv.rows[0]?.protocol || '-'}</td>
+                <td style="text-align: right; white-space: nowrap;">${formatCurrency(inv.initialAmount)}</td>
+            </tr>
+        `).join('');
+
+        const html = `
+        <!DOCTYPE html>
+        <html lang="it">
+        <head>
+            <meta charset="UTF-8">
+            <title>Stampa Storico</title>
+            <style>
+                body { font-family: 'Helvetica', 'Arial', sans-serif; padding: 40px; color: #333; }
+                h1 { font-size: 24px; margin-bottom: 5px; color: #1e293b; }
+                .meta { font-size: 14px; color: #64748b; margin-bottom: 30px; }
+                table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 30px; }
+                th { text-align: left; padding: 10px 5px; border-bottom: 1px solid #cbd5e1; color: #475569; font-weight: 600; }
+                td { padding: 8px 5px; border-bottom: 1px solid #f1f5f9; }
+                tr:last-child td { border-bottom: none; }
+                .amount-col { text-align: right; }
+                .total-box { margin-top: 20px; text-align: right; font-size: 16px; font-weight: bold; }
+                @media print {
+                    @page { margin: 1cm; }
+                    body { padding: 0; }
+                }
+            </style>
+        </head>
+        <body>
+            <h1>${title}</h1>
+            <div class="meta">Generato il ${printDate} - ${historyInvoices.length} righe</div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th width="12%">Data</th>
+                        <th width="25%">Fornitore</th>
+                        <th width="33%">Descrizione</th>
+                        <th width="15%">Prot.</th>
+                        <th width="15%" class="amount-col">Importo</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows}
+                </tbody>
+            </table>
+
+            <div class="total-box">
+                TOTALE SALDATO: ${formatCurrency(totalSettled)}
+            </div>
+        </body>
+        </html>
+        `;
+
+        const printWindow = window.open('', '_blank', 'width=900,height=800');
+        if (printWindow) {
+            printWindow.document.write(html);
+            printWindow.document.close();
+            printWindow.focus();
+            setTimeout(() => {
+                printWindow.print();
+            }, 500);
+        }
+    };
+
     return (
       <div className="p-6 max-w-7xl mx-auto h-[calc(100vh-100px)] flex flex-col">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-4 flex flex-wrap gap-4 items-end">
+        {/* ... Filters ... */}
+         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-4 flex flex-wrap gap-4 items-end">
           <div className="flex-1 min-w-[200px]">
             <input 
               type="text" 
@@ -555,7 +875,6 @@ const App = () => {
               value={search} onChange={e => setSearch(e.target.value)}
             />
           </div>
-          
           <div className="flex flex-col">
             <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Mese</span>
             <select className={`${INPUT_SM_STYLE} w-32`} value={month} onChange={e => setMonth(e.target.value)}>
@@ -563,39 +882,44 @@ const App = () => {
               {[...Array(12)].map((_, i) => <option key={i} value={i+1}>{new Date(0, i).toLocaleString('it-IT', { month: 'long' })}</option>)}
             </select>
           </div>
-
-          <div className="flex flex-col">
+           <div className="flex flex-col">
              <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Anno</span>
              <select className={`${INPUT_SM_STYLE} w-24`} value={year} onChange={e => setYear(e.target.value)}>
                <option value="">Tutti</option>
                {years.map(y => <option key={y} value={y}>{y}</option>)}
              </select>
           </div>
-
           <div className="flex flex-col">
              <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Dal</span>
              <input type="date" className={INPUT_SM_STYLE} value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
           </div>
-
           <div className="flex flex-col">
              <span className="text-[10px] font-bold text-slate-400 uppercase mb-1">Al</span>
              <input type="date" className={INPUT_SM_STYLE} value={dateTo} onChange={e => setDateTo(e.target.value)} />
           </div>
-
           <div className="flex items-center gap-2 pb-2">
             <input type="checkbox" id="hist_merch" checked={onlyMerch} onChange={e => setOnlyMerch(e.target.checked)} className="rounded text-primary-600" />
             <label htmlFor="hist_merch" className="text-sm text-slate-700 font-medium">Solo Merce</label>
           </div>
           
-          <button 
-            onClick={() => { setSearch(''); setMonth(''); setYear(''); setOnlyMerch(false); setDateFrom(''); setDateTo(''); }}
-            className="ml-auto px-3 py-2 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-1 transition-colors"
-            title="Resetta Filtri"
-          >
-            <History size={16} /> Reset
-          </button>
+          <div className="ml-auto flex gap-2">
+             <button 
+                onClick={() => { setSearch(''); setMonth(''); setYear(''); setOnlyMerch(false); setDateFrom(''); setDateTo(''); }}
+                className="px-3 py-2 text-slate-500 hover:text-slate-700 hover:bg-slate-50 rounded-lg flex items-center gap-1 transition-colors"
+                title="Resetta Filtri"
+              >
+                <History size={16} /> Reset
+              </button>
+             <button 
+                onClick={handlePrintHistory}
+                className="px-3 py-2 text-primary-600 hover:text-primary-700 hover:bg-primary-50 rounded-lg flex items-center gap-1 transition-colors font-medium"
+                title="Stampa Storico"
+              >
+                <Printer size={18} /> Stampa PDF
+              </button>
+          </div>
         </div>
-
+        
         <div className="flex-1 overflow-y-auto bg-white rounded-xl shadow-sm border border-slate-200">
           <table className="w-full text-sm text-left">
             <thead className="text-xs text-slate-500 uppercase bg-slate-50 sticky top-0">
@@ -646,7 +970,7 @@ const App = () => {
       {isLoading && <LoadingOverlay />}
       
       {/* Header Tabs */}
-      <div className="bg-white border-b border-slate-200 shadow-sm z-10 sticky top-0">
+      <div className="bg-white border-b border-slate-200 shadow-sm z-10 sticky top-0 print:hidden">
         <div className="max-w-7xl mx-auto flex items-center justify-between px-6">
           <div className="flex">
             <TabButton active={activeTab === 0} onClick={() => setActiveTab(0)} icon={Users} label="Elenco Fornitori" />
@@ -656,57 +980,24 @@ const App = () => {
           </div>
 
           <div className="flex items-center gap-4">
-             {/* User info / Logout */}
+             {/* ... User Menu ... */}
              <div className="hidden md:flex flex-col items-end mr-2">
                 <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Utente</span>
                 <span className="text-sm font-medium text-slate-700">{session.user.email}</span>
              </div>
-             
              <div className="h-8 w-px bg-slate-200 mx-2 hidden md:block"></div>
-
              <div className="flex gap-2">
-                <button
-                    onClick={() => setChangePasswordOpen(true)}
-                    className="p-2 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-full transition-colors"
-                    title="Cambia Password"
-                >
-                   <Key size={20} />
-                </button>
-                <button
-                    onClick={handleExportData}
-                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                    title="Esporta Backup"
-                >
-                    <Download size={20} />
-                </button>
-                <button
-                    onClick={handleImportClick}
-                    className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-                    title="Importa Backup"
-                >
-                    <Upload size={20} />
-                </button>
-                <button
-                    onClick={handleLogout}
-                    className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors"
-                    title="Esci"
-                >
-                    <LogOut size={20} />
-                </button>
+                <button onClick={() => setChangePasswordOpen(true)} className="p-2 text-slate-400 hover:text-primary-600 hover:bg-primary-50 rounded-full transition-colors" title="Cambia Password"><Key size={20} /></button>
+                <button onClick={handleExportData} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors" title="Esporta Backup"><Download size={20} /></button>
+                <button onClick={handleImportClick} className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors" title="Importa Backup"><Upload size={20} /></button>
+                <button onClick={handleLogout} className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors" title="Esci"><LogOut size={20} /></button>
              </div>
-             <input 
-                type="file" 
-                ref={fileInputRef} 
-                onChange={handleFileChange} 
-                className="hidden" 
-                accept=".json"
-             />
+             <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" accept=".json" />
           </div>
         </div>
       </div>
 
-      {/* Main Content */}
-      <div className="flex-1 overflow-hidden relative">
+      <div className="flex-1 overflow-hidden relative print:overflow-visible print:h-auto">
         {activeTab === 0 && <SupplierListTab />}
         {activeTab === 1 && <SupplierDetailTab />}
         {activeTab === 2 && <ActiveInvoicesTab />}
@@ -727,8 +1018,42 @@ const App = () => {
         existingInvoice={editingInvoice.invoice}
         supplierName={suppliers.find(s => s.id === editingInvoice.supplierId)?.name || ''}
         onSave={refreshData}
+        onDelete={handleRequestInvoiceDelete} // Pass the handler that opens the modal
       />
 
+      {/* MODALE DI CONFERMA ELIMINAZIONE FATTURA */}
+      <Modal
+        isOpen={!!invoiceToDelete}
+        onClose={() => setInvoiceToDelete(null)}
+        title="Elimina Registrazione"
+        maxWidth="max-w-md"
+      >
+        <div className="text-center p-6">
+           <div className="bg-red-50 text-red-600 p-4 rounded-full w-20 h-20 flex items-center justify-center mx-auto mb-6 shadow-sm">
+             <Trash2 size={36} />
+           </div>
+           <h3 className="text-xl font-black text-slate-800 mb-2">Eliminare definitivamente?</h3>
+           <p className="text-slate-500 mb-8 text-sm leading-relaxed">
+             Stai per cancellare questa registrazione. L'operazione è irreversibile.
+           </p>
+           <div className="flex gap-4">
+             <button 
+               onClick={() => setInvoiceToDelete(null)}
+               className="flex-1 py-3 border border-slate-200 rounded-xl font-bold text-slate-600 hover:bg-slate-50 transition-all"
+             >
+               Annulla
+             </button>
+             <button 
+               onClick={confirmDeleteInvoice}
+               className="flex-1 py-3 bg-red-600 text-white rounded-xl font-bold hover:bg-red-700 transition-all shadow-lg shadow-red-100"
+             >
+               Conferma Eliminazione
+             </button>
+           </div>
+        </div>
+      </Modal>
+
+      {/* Existing Supplier Delete Modal */}
       <Modal
         isOpen={!!supplierToDelete}
         onClose={() => setSupplierToDelete(null)}

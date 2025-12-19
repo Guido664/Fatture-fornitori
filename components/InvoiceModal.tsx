@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect } from 'react';
 import { Plus, Trash2, Save } from 'lucide-react';
 import { Invoice, InvoiceRow } from '../types';
@@ -10,6 +11,7 @@ interface InvoiceModalProps {
   supplierId: string;
   existingInvoice?: Invoice | null;
   onSave: () => void;
+  onDelete: (id: string) => void;
   supplierName: string;
 }
 
@@ -23,7 +25,7 @@ const emptyRow = (): InvoiceRow => ({
 });
 
 export const InvoiceModal: React.FC<InvoiceModalProps> = ({ 
-  isOpen, onClose, supplierId, existingInvoice, onSave, supplierName 
+  isOpen, onClose, supplierId, existingInvoice, onSave, onDelete, supplierName 
 }) => {
   const [rows, setRows] = useState<InvoiceRow[]>([]);
   const [isSaving, setIsSaving] = useState(false);
@@ -49,6 +51,14 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
   const removeRow = (id: string) => {
     if (rows.length > 1) {
       setRows(prev => prev.filter(r => r.id !== id));
+    } else {
+      // Se l'utente prova a cancellare l'ultima riga, chiediamo se vuole eliminare la fattura
+      if (existingInvoice?.id) {
+        onDelete(existingInvoice.id);
+      } else {
+        // Se è una nuova fattura non salvata, chiudiamo semplicemente il modale
+        onClose();
+      }
     }
   };
 
@@ -143,9 +153,10 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
                   className="w-full p-2 text-sm border border-slate-300 rounded text-right focus:ring-2 focus:ring-primary-500 outline-none"
                 />
                 <button 
+                  type="button" 
                   onClick={() => removeRow(row.id)}
                   className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                  disabled={rows.length === 1}
+                  title={rows.length === 1 ? "Elimina intera fattura" : "Elimina riga"}
                 >
                   <Trash2 size={16} />
                 </button>
@@ -155,18 +166,32 @@ export const InvoiceModal: React.FC<InvoiceModalProps> = ({
         </div>
 
         <div className="pt-4 border-t border-slate-200 flex justify-between items-center">
-          <button 
-            onClick={addRow}
-            className="flex items-center gap-2 text-primary-600 hover:text-primary-700 font-medium px-3 py-2 rounded hover:bg-primary-50 transition-colors"
-          >
-            <Plus size={18} /> Aggiungi Riga
-          </button>
+          <div className="flex gap-2">
+             <button 
+                type="button"
+                onClick={addRow}
+                className="flex items-center gap-2 text-primary-600 hover:text-primary-700 font-medium px-3 py-2 rounded hover:bg-primary-50 transition-colors"
+              >
+                <Plus size={18} /> Aggiungi Riga
+              </button>
+              
+              {existingInvoice && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(existingInvoice.id)}
+                  className="flex items-center gap-2 text-red-600 hover:text-red-700 font-medium px-3 py-2 rounded hover:bg-red-50 transition-colors"
+                >
+                  <Trash2 size={18} /> Elimina Registrazione
+                </button>
+              )}
+          </div>
 
           <div className="flex items-center gap-6">
             <div className={`text-lg font-bold ${balance > 0 ? 'text-red-600' : 'text-emerald-600'}`}>
               Saldo Totale: {new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(balance)}
             </div>
             <button 
+              type="button"
               onClick={handleSave}
               disabled={isSaving}
               className="flex items-center gap-2 bg-primary-600 hover:bg-primary-700 text-white px-6 py-2.5 rounded-lg font-medium shadow-sm transition-all disabled:opacity-50"
