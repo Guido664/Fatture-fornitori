@@ -36,8 +36,11 @@ const TabButton = ({ active, onClick, icon: Icon, label }: any) => (
 const formatCurrency = (amount: number) => 
   new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(amount);
 
-const formatDate = (dateStr: string) => 
-  new Date(dateStr).toLocaleDateString('it-IT');
+const formatDate = (dateStr: string | undefined | null) => {
+  if (!dateStr) return '-';
+  const d = new Date(dateStr);
+  return isNaN(d.getTime()) ? '-' : d.toLocaleDateString('it-IT');
+};
 
 interface InvoiceCardProps {
   inv: InvoiceWithSupplier;
@@ -75,7 +78,7 @@ const App = () => {
   // Modals
   const [isSupplierModalOpen, setSupplierModalOpen] = useState(false);
   const [supplierToDelete, setSupplierToDelete] = useState<string | null>(null);
-  const [invoiceToDelete, setInvoiceToDelete] = useState<string | null>(null); // NEW: State for invoice deletion confirmation
+  const [invoiceToDelete, setInvoiceToDelete] = useState<string | null>(null);
   const [isDeleteAllModalOpen, setDeleteAllModalOpen] = useState(false);
   const [isChangePasswordOpen, setChangePasswordOpen] = useState(false);
   const [editingInvoice, setEditingInvoice] = useState<{ isOpen: boolean, supplierId: string, invoice: Invoice | null }>({
@@ -99,7 +102,6 @@ const App = () => {
       setSession(session);
       setAuthLoading(false);
       
-      // Se l'evento è un recupero password, apri il modale di cambio password
       if (event === 'PASSWORD_RECOVERY') {
         setChangePasswordOpen(true);
       }
@@ -147,7 +149,6 @@ const App = () => {
 
   // Handle Invoice Deletion Trigger
   const handleRequestInvoiceDelete = (id: string) => {
-    // Open the confirmation modal instead of window.confirm
     setInvoiceToDelete(id);
   };
 
@@ -158,7 +159,6 @@ const App = () => {
     setIsLoading(true);
     try {
       await deleteInvoice(invoiceToDelete);
-      // Close the editing modal as well since the invoice is gone
       setEditingInvoice(prev => ({ ...prev, isOpen: false, invoice: null }));
       setInvoiceToDelete(null);
       await refreshData();
@@ -247,6 +247,25 @@ const App = () => {
     setSelectedSupplierId(null);
     setActiveTab(0);
     await supabase.auth.signOut();
+  };
+
+  // --- Funzione Stampa Semplificata (Metodo Originale/Window Open) ---
+  const printHtmlContent = (htmlContent: string) => {
+    const printWindow = window.open('', '_blank', 'width=900,height=650');
+    if (!printWindow) {
+      alert("Il browser ha bloccato la finestra di stampa. Abilita i popup e riprova.");
+      return;
+    }
+    
+    printWindow.document.open();
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+    printWindow.focus();
+    
+    // Timeout breve per assicurare il rendering prima della stampa
+    setTimeout(() => {
+      printWindow.print();
+    }, 500);
   };
 
   const LoadingOverlay = () => (
@@ -493,8 +512,12 @@ const App = () => {
     const [dateFrom, setDateFrom] = useState('');
     const [dateTo, setDateTo] = useState('');
     const [onlyMerch, setOnlyMerch] = useState(false);
+    const [onlyServices, setOnlyServices] = useState(false);
 
-    const years = Array.from(new Set(enrichedInvoices.map(i => new Date(i.rows[0]?.date).getFullYear()))).sort().reverse();
+    const years = Array.from(new Set(enrichedInvoices.map(i => {
+       const d = new Date(i.rows[0]?.date);
+       return isNaN(d.getTime()) ? null : d.getFullYear();
+    }).filter(y => y !== null))).sort().reverse();
 
     const applyFilters = (invList: InvoiceWithSupplier[]) => {
       return invList.filter(i => {
@@ -533,124 +556,139 @@ const App = () => {
       setDateFrom('');
       setDateTo('');
       setOnlyMerch(false);
+      setOnlyServices(false);
     };
 
     const handlePrint = () => {
-        // 1. Prepare Content
-        const title = "Scadenziario Fornitori";
-        const printDate = new Date().toLocaleDateString('it-IT');
-        
-        // Helper for table rows
-        const renderTableRows = (list: InvoiceWithSupplier[]) => {
-            if (list.length === 0) return '<tr><td colspan="4" style="text-align:center; padding: 10px; font-style: italic;">Nessuna scadenza</td></tr>';
-            return list.map(inv => `
-                <tr>
-                    <td>${formatDate(inv.rows[0]?.date)}</td>
-                    <td><strong>${inv.supplier.name}</strong></td>
-                    <td>${inv.rows[0]?.description || '-'}</td>
-                    <td style="text-align: right; white-space: nowrap;">${formatCurrency(inv.balance)}</td>
-                </tr>
-            `).join('');
-        };
+        try {
+            const title = "Scadenziario Fornitori";
+            const printDate = new Date().toLocaleDateString('it-IT');
+            
+            // Helper function to escape HTML special characters
+            const escapeHtml = (text: string) => {
+                if (!text) return '';
+                return text.replace(/&/g, "&amp;")
+                           .replace(/</g, "&lt;")
+                           .replace(/>/g, "&gt;")
+                           .replace(/"/g, "&quot;")
+                           .replace(/'/g, "&#039;");
+            };
 
-        const merchRows = renderTableRows(merchandiseInvoices);
-        const payRows = renderTableRows(toPayInvoices);
+            const renderRows = (list: InvoiceWithSupplier[]) => {
+                if (!list || list.length === 0) return '<tr><td colspan="4" style="text-align:center; padding: 10px; font-style: italic;">Nessuna scadenza</td></tr>';
+                return list.map(inv => `
+                    <tr>
+                        <td>${formatDate(inv.rows[0]?.date)}</td>
+                        <td><strong>${escapeHtml(inv.supplier.name)}</strong></td>
+                        <td>${escapeHtml(inv.rows[0]?.description || '-')}</td>
+                        <td style="text-align: right; white-space: nowrap;">${formatCurrency(inv.balance)}</td>
+                    </tr>
+                `).join('');
+            };
 
-        const html = `
-        <!DOCTYPE html>
-        <html lang="it">
-        <head>
-            <meta charset="UTF-8">
-            <title>Stampa Scadenziario</title>
-            <style>
-                body { font-family: 'Helvetica', 'Arial', sans-serif; padding: 40px; color: #333; }
-                h1 { font-size: 24px; margin-bottom: 5px; color: #1e293b; }
-                .meta { font-size: 14px; color: #64748b; margin-bottom: 30px; }
-                .section { margin-bottom: 40px; }
-                .section-title { font-size: 16px; font-weight: bold; text-transform: uppercase; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; }
-                table { width: 100%; border-collapse: collapse; font-size: 13px; }
-                th { text-align: left; padding: 10px 5px; border-bottom: 1px solid #cbd5e1; color: #475569; font-weight: 600; }
-                td { padding: 8px 5px; border-bottom: 1px solid #f1f5f9; }
-                tr:last-child td { border-bottom: none; }
-                .amount-col { text-align: right; }
-                .total-row { font-weight: bold; font-size: 15px; margin-top: 10px; text-align: right; color: #0f172a; }
-                .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: bold; }
-                .badge-orange { background: #ffedd5; color: #c2410c; }
-                .badge-red { background: #fee2e2; color: #b91c1c; }
-                @media print {
-                    @page { margin: 1cm; }
-                    body { padding: 0; }
-                }
-            </style>
-        </head>
-        <body>
-            <h1>${title}</h1>
-            <div class="meta">Generato il ${printDate}</div>
+            const showMerch = !onlyServices && merchandiseInvoices.length > 0;
+            const showServices = !onlyMerch && toPayInvoices.length > 0;
+            const totalPrint = (showMerch ? sumMerch : 0) + (showServices ? sumPay : 0);
 
-            <div class="section">
-                <div class="section-title">
-                    <span>Merce Conto Acquisti</span>
-                    <span class="badge badge-orange">${merchandiseInvoices.length} scadenze</span>
+            let bodyHTML = '';
+
+            if (showMerch) {
+                bodyHTML += `
+                <div class="section">
+                    <div class="section-title">
+                        <span>Merce Conto Acquisti</span>
+                        <span class="badge badge-orange">${merchandiseInvoices.length} scadenze</span>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th width="15%">Data</th>
+                                <th width="30%">Fornitore</th>
+                                <th width="35%">Descrizione</th>
+                                <th width="20%" class="amount-col">Importo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${renderRows(merchandiseInvoices)}
+                        </tbody>
+                    </table>
+                    <div class="total-row">Totale: ${formatCurrency(sumMerch)}</div>
+                </div>`;
+            }
+
+            if (showServices) {
+                bodyHTML += `
+                <div class="section">
+                    <div class="section-title">
+                        <span>Spese Generali / Servizi</span>
+                        <span class="badge badge-red">${toPayInvoices.length} scadenze</span>
+                    </div>
+                     <table>
+                        <thead>
+                            <tr>
+                                <th width="15%">Data</th>
+                                <th width="30%">Fornitore</th>
+                                <th width="35%">Descrizione</th>
+                                <th width="20%" class="amount-col">Importo</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${renderRows(toPayInvoices)}
+                        </tbody>
+                    </table>
+                    <div class="total-row">Totale: ${formatCurrency(sumPay)}</div>
+                </div>`;
+            }
+
+            if (!bodyHTML) {
+                bodyHTML = '<div style="text-align:center; padding: 20px; color: #666; font-style: italic;">Nessuna scadenza trovata con i filtri selezionati.</div>';
+            }
+
+            const html = `
+            <!DOCTYPE html>
+            <html lang="it">
+            <head>
+                <meta charset="UTF-8">
+                <title>Stampa Scadenziario</title>
+                <style>
+                    body { font-family: 'Helvetica', 'Arial', sans-serif; padding: 40px; color: #333; }
+                    h1 { font-size: 24px; margin-bottom: 5px; color: #1e293b; }
+                    .meta { font-size: 14px; color: #64748b; margin-bottom: 30px; }
+                    .section { margin-bottom: 40px; }
+                    .section-title { font-size: 16px; font-weight: bold; text-transform: uppercase; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; margin-bottom: 15px; display: flex; justify-content: space-between; }
+                    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+                    th { text-align: left; padding: 10px 5px; border-bottom: 1px solid #cbd5e1; color: #475569; font-weight: 600; }
+                    td { padding: 8px 5px; border-bottom: 1px solid #f1f5f9; }
+                    tr:last-child td { border-bottom: none; }
+                    .amount-col { text-align: right; }
+                    .total-row { font-weight: bold; font-size: 15px; margin-top: 10px; text-align: right; color: #0f172a; }
+                    .badge { display: inline-block; padding: 2px 8px; border-radius: 99px; font-size: 11px; font-weight: bold; }
+                    .badge-orange { background: #ffedd5; color: #c2410c; }
+                    .badge-red { background: #fee2e2; color: #b91c1c; }
+                    @media print {
+                        @page { margin: 1cm; }
+                        body { padding: 0; }
+                    }
+                </style>
+            </head>
+            <body>
+                <h1>${title}</h1>
+                <div class="meta">Generato il ${printDate} ${search ? `| Filtro: "${search}"` : ''}</div>
+
+                ${bodyHTML}
+
+                <div style="margin-top: 50px; padding-top: 20px; border-top: 2px solid #333; text-align: right; font-size: 18px; font-weight: bold;">
+                    TOTALE COMPLESSIVO: ${formatCurrency(totalPrint)}
                 </div>
-                <table>
-                    <thead>
-                        <tr>
-                            <th width="15%">Data</th>
-                            <th width="30%">Fornitore</th>
-                            <th width="35%">Descrizione</th>
-                            <th width="20%" class="amount-col">Importo</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${merchRows}
-                    </tbody>
-                </table>
-                <div class="total-row">Totale: ${formatCurrency(sumMerch)}</div>
-            </div>
+            </body>
+            </html>
+            `;
 
-            ${!onlyMerch ? `
-            <div class="section">
-                <div class="section-title">
-                    <span>Spese Generali / Servizi</span>
-                    <span class="badge badge-red">${toPayInvoices.length} scadenze</span>
-                </div>
-                 <table>
-                    <thead>
-                        <tr>
-                            <th width="15%">Data</th>
-                            <th width="30%">Fornitore</th>
-                            <th width="35%">Descrizione</th>
-                            <th width="20%" class="amount-col">Importo</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${payRows}
-                    </tbody>
-                </table>
-                <div class="total-row">Totale: ${formatCurrency(sumPay)}</div>
-            </div>
-            ` : ''}
+            printHtmlContent(html);
 
-            <div style="margin-top: 50px; padding-top: 20px; border-top: 2px solid #333; text-align: right; font-size: 18px; font-weight: bold;">
-                TOTALE COMPLESSIVO: ${formatCurrency(sumMerch + (onlyMerch ? 0 : sumPay))}
-            </div>
-        </body>
-        </html>
-        `;
-
-        const printWindow = window.open('', '_blank', 'width=900,height=800');
-        if (printWindow) {
-            printWindow.document.write(html);
-            printWindow.document.close();
-            printWindow.focus();
-            // Wait for potential rendering
-            setTimeout(() => {
-                printWindow.print();
-                // Optional: close after print
-                // printWindow.close(); 
-            }, 500);
-        } else {
-            alert("Impossibile aprire la finestra di stampa. Controlla il blocco popup.");
+        } catch (error) {
+            console.error("Print generation error:", error);
+            alert("Errore durante la generazione della stampa.");
         }
     };
 
@@ -658,7 +696,7 @@ const App = () => {
       <div className="p-6 max-w-7xl mx-auto h-[calc(100vh-100px)] flex flex-col">
         {/* Filter Bar */}
         <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 mb-6 flex flex-wrap gap-4 items-end">
-          <div className="flex-1 min-w-[200px]">
+          <div className="w-64">
             <input 
               type="text" 
               placeholder="Cerca fornitore..." 
@@ -693,9 +731,34 @@ const App = () => {
              <input type="date" className={INPUT_SM_STYLE} value={dateTo} onChange={e => setDateTo(e.target.value)} />
           </div>
 
-          <div className="flex items-center gap-2 pb-2">
-            <input type="checkbox" id="active_merch" checked={onlyMerch} onChange={e => setOnlyMerch(e.target.checked)} className="rounded text-primary-600" />
-            <label htmlFor="active_merch" className="text-sm text-slate-700 font-medium">Solo Merce</label>
+          <div className="flex items-center gap-4 pb-2">
+            <div className="flex items-center gap-2">
+              <input 
+                type="checkbox" 
+                id="active_merch" 
+                checked={onlyMerch} 
+                onChange={e => { 
+                  setOnlyMerch(e.target.checked); 
+                  if(e.target.checked) setOnlyServices(false); 
+                }} 
+                className="rounded text-primary-600 cursor-pointer" 
+              />
+              <label htmlFor="active_merch" className="text-sm text-slate-700 font-medium cursor-pointer">Solo Merce</label>
+            </div>
+            
+            <div className="flex items-center gap-2">
+              <input 
+                type="checkbox" 
+                id="active_services" 
+                checked={onlyServices} 
+                onChange={e => { 
+                  setOnlyServices(e.target.checked); 
+                  if(e.target.checked) setOnlyMerch(false); 
+                }} 
+                className="rounded text-primary-600 cursor-pointer" 
+              />
+              <label htmlFor="active_services" className="text-sm text-slate-700 font-medium cursor-pointer">Solo Da Saldare</label>
+            </div>
           </div>
           
           <div className="ml-auto flex gap-2">
@@ -719,42 +782,46 @@ const App = () => {
         {/* MAIN CONTENT AREA */}
         <div className="flex-1 overflow-y-auto space-y-8 pr-2">
           
-          <section>
-            <div className="flex items-center justify-between mb-4">
-              <div className="flex items-center gap-3">
-                <h3 className="text-lg font-bold text-slate-800">📦 MERCE CONTO ACQUISTI</h3>
-                <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full font-bold">{merchandiseInvoices.length}</span>
+          {/* SEZIONE MERCE (Solo se non sto guardando solo i servizi) */}
+          {!onlyServices && (
+            <section>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-bold text-slate-800">📦 MERCE CONTO ACQUISTI</h3>
+                  <span className="bg-orange-100 text-orange-700 text-xs px-2 py-0.5 rounded-full font-bold">{merchandiseInvoices.length}</span>
+                </div>
+                <div className="text-orange-600 font-bold text-lg">
+                  Totale: {formatCurrency(sumMerch)}
+                </div>
               </div>
-              <div className="text-orange-600 font-bold text-lg">
-                Totale: {formatCurrency(sumMerch)}
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {merchandiseInvoices.map(inv => <InvoiceCard key={inv.id} inv={inv} onClick={handleInvoiceClick} />)}
+                {merchandiseInvoices.length === 0 && <div className="text-slate-400 italic text-sm">Nessuna fattura presente.</div>}
               </div>
-            </div>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {merchandiseInvoices.map(inv => <InvoiceCard key={inv.id} inv={inv} onClick={handleInvoiceClick} />)}
-              {merchandiseInvoices.length === 0 && <div className="text-slate-400 italic text-sm">Nessuna fattura presente.</div>}
-            </div>
-          </section>
+            </section>
+          )}
 
+          {!onlyMerch && !onlyServices && (
+            <div className="border-t border-slate-200 my-4"></div>
+          )}
+
+          {/* SEZIONE SERVIZI (Solo se non sto guardando solo la merce) */}
           {!onlyMerch && (
-            <>
-              <div className="border-t border-slate-200 my-4"></div>
-
-              <section>
-                <div className="flex items-center justify-between mb-4">
-                  <div className="flex items-center gap-3">
-                    <h3 className="text-lg font-bold text-slate-800">💰 DA SALDARE (Servizi)</h3>
-                    <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-bold">{toPayInvoices.length}</span>
-                  </div>
-                  <div className="text-red-600 font-bold text-lg">
-                    Totale: {formatCurrency(sumPay)}
-                  </div>
+            <section>
+              <div className="flex items-center justify-between mb-4">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-lg font-bold text-slate-800">💰 DA SALDARE (Servizi)</h3>
+                  <span className="bg-red-100 text-red-700 text-xs px-2 py-0.5 rounded-full font-bold">{toPayInvoices.length}</span>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {toPayInvoices.map(inv => <InvoiceCard key={inv.id} inv={inv} onClick={handleInvoiceClick} />)}
-                  {toPayInvoices.length === 0 && <div className="text-slate-400 italic text-sm">Tutto saldato!</div>}
+                <div className="text-red-600 font-bold text-lg">
+                  Totale: {formatCurrency(sumPay)}
                 </div>
-              </section>
-            </>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {toPayInvoices.map(inv => <InvoiceCard key={inv.id} inv={inv} onClick={handleInvoiceClick} />)}
+                {toPayInvoices.length === 0 && <div className="text-slate-400 italic text-sm">Tutto saldato!</div>}
+              </div>
+            </section>
           )}
         </div>
       </div>
@@ -770,7 +837,10 @@ const App = () => {
     const [dateTo, setDateTo] = useState('');
     const [onlyMerch, setOnlyMerch] = useState(false);
 
-    const years = Array.from(new Set(enrichedInvoices.map(i => new Date(i.rows[0]?.date).getFullYear()))).sort().reverse();
+    const years = Array.from(new Set(enrichedInvoices.map(i => {
+       const d = new Date(i.rows[0]?.date);
+       return isNaN(d.getTime()) ? null : d.getFullYear();
+    }).filter(y => y !== null))).sort().reverse();
 
     const historyInvoices = enrichedInvoices.filter(i => {
       if (i.balance !== 0) return false;
@@ -851,16 +921,8 @@ const App = () => {
         </body>
         </html>
         `;
-
-        const printWindow = window.open('', '_blank', 'width=900,height=800');
-        if (printWindow) {
-            printWindow.document.write(html);
-            printWindow.document.close();
-            printWindow.focus();
-            setTimeout(() => {
-                printWindow.print();
-            }, 500);
-        }
+        
+        printHtmlContent(html);
     };
 
     return (
