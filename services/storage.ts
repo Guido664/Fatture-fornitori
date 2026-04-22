@@ -10,6 +10,7 @@ export const getSuppliers = async (): Promise<Supplier[]> => {
   const { data, error } = await supabase
     .from('suppliers')
     .select('*')
+    .limit(10000)
     .order('name', { ascending: true });
   
   if (error) {
@@ -22,7 +23,8 @@ export const getSuppliers = async (): Promise<Supplier[]> => {
 export const getInvoices = async (): Promise<Invoice[]> => {
   const { data, error } = await supabase
     .from('invoices')
-    .select('*');
+    .select('*')
+    .limit(10000);
   
   if (error) {
     console.error('Error fetching invoices:', error);
